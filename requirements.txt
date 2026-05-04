@@ -1,0 +1,11 @@
+transformers
+peft
+bitsandbytes
+accelerate
+datasets
+wandb
+kaggle
+Pillow
+opencv-python
+tqdm
+numpy
