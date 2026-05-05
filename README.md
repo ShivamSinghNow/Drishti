@@ -11,6 +11,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `explore_dataset.py`: reports split counts, class distribution, image shapes, pixel ranges, and verifies 512x512 image size.
 - `verify_model.py`: loads `Qwen/Qwen2-VL-7B-Instruct`, runs one chest X-ray inference, and reports peak GPU memory.
 - `format_samples.py`: writes three Qwen2-VL-style fine-tuning examples to `formatted_samples.json`.
+- `preprocess_samples.py`: validates the RGB resize and Qwen-VL processor path on a small TBX11K batch.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
@@ -56,6 +57,7 @@ python download_dataset.py
 python explore_dataset.py
 python verify_model.py
 python format_samples.py
+python preprocess_samples.py --split train --limit 10
 python setup_wandb.py
 ```
 
