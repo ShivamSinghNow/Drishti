@@ -53,13 +53,40 @@ def canonical_category(value: str | Path | None) -> str | None:
     if not token:
         return None
     for category, aliases in CATEGORY_ALIASES.items():
-        if token == category or token in aliases:
+        candidates = _category_candidates(category, aliases)
+        if token in candidates:
             return category
+
+    best_category = None
+    best_specificity = 0
     for category, aliases in CATEGORY_ALIASES.items():
-        candidates = {category, *aliases}
-        if any(candidate and candidate in token for candidate in candidates):
-            return category
+        for candidate in _category_candidates(category, aliases):
+            specificity = _token_sequence_specificity(token, candidate)
+            if specificity > best_specificity:
+                best_category = category
+                best_specificity = specificity
+    if best_category:
+        return best_category
     return None
+
+
+def _category_candidates(category: str, aliases: set[str]) -> set[str]:
+    return {
+        normalized
+        for value in {category, *aliases}
+        if (normalized := normalize_token(value))
+    }
+
+
+def _token_sequence_specificity(token: str, candidate: str) -> int:
+    token_parts = token.split("_")
+    candidate_parts = candidate.split("_")
+    if not token_parts or not candidate_parts or len(candidate_parts) > len(token_parts):
+        return 0
+    for index in range(len(token_parts) - len(candidate_parts) + 1):
+        if token_parts[index : index + len(candidate_parts)] == candidate_parts:
+            return len(candidate_parts)
+    return 0
 
 
 def canonical_split(value: str | Path | None) -> str | None:

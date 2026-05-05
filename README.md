@@ -13,6 +13,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `format_samples.py`: writes three Qwen2-VL-style fine-tuning examples to `formatted_samples.json`.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
+- `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
 
 ## Setup On AMD MI300X With ROCm
 
@@ -49,6 +50,7 @@ For W&B online logging, run `wandb login` or set `WANDB_API_KEY`. Without creden
 ## Run Order
 
 ```bash
+python -m unittest -v
 python verify_gpu.py
 python download_dataset.py
 python explore_dataset.py
