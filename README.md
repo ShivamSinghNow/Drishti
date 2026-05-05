@@ -14,6 +14,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `preprocess_samples.py`: validates the RGB resize and Qwen-VL processor path on a small TBX11K batch.
 - `generate_jsonl.py`: writes local Qwen-VL conversation JSONL files for the TBX11K train and val splits.
 - `build_dataloader.py`: validates Qwen-VL tokenized train/val DataLoader batches with masked labels.
+- `train_qlora.py`: configures the AMD-ready QLoRA training run and supports local dry-run validation.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
@@ -63,6 +64,7 @@ python preprocess_samples.py --split train --limit 10
 python generate_jsonl.py --output-dir data/processed
 python build_dataloader.py --split train --batch-size 2 --limit 2
 python build_dataloader.py --split val --batch-size 2 --limit 2
+python train_qlora.py --dry-run --train-limit 2 --eval-limit 2
 python setup_wandb.py
 ```
 

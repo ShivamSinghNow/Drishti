@@ -3,6 +3,7 @@ transformers
 peft
 bitsandbytes
 accelerate
+optimum-amd
 datasets
 wandb
 kaggle
