@@ -1,3 +1,4 @@
+# Install torch, torchvision, and torchaudio first from the matching ROCm-specific PyTorch index.
 transformers
 peft
 bitsandbytes

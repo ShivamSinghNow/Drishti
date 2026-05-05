@@ -11,7 +11,26 @@ from tbx11k_utils import DATA_DIR, load_records
 
 PROJECT_NAME = "tbx11k-qwen-vl-finetuning"
 MODEL_NAME = "Qwen/Qwen2-VL-7B-Instruct"
-DATASET_NAME = "vbookshelf/tbx11k-simplified"
+DATASET_NAME = "TBX11K official archive"
+
+
+def count_official_split(name: str) -> int | None:
+    split_file = DATA_DIR / "TBX11K" / "lists" / f"TBX11K_{name}.txt"
+    if not split_file.exists():
+        return None
+    return sum(1 for line in split_file.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def dataset_counts() -> tuple[int, int]:
+    official_train = count_official_split("train")
+    official_val = count_official_split("val")
+    if official_train is not None and official_val is not None:
+        return official_train, official_val
+
+    records, _, _ = load_records(DATA_DIR)
+    num_train_images = sum(1 for record in records if record.split == "train")
+    num_val_images = sum(1 for record in records if record.split == "val")
+    return num_train_images, num_val_images
 
 
 def wandb_mode() -> str:
@@ -26,9 +45,7 @@ def wandb_mode() -> str:
 
 
 def main() -> int:
-    records, _, _ = load_records(DATA_DIR)
-    num_train_images = sum(1 for record in records if record.split == "train")
-    num_val_images = sum(1 for record in records if record.split == "val")
+    num_train_images, num_val_images = dataset_counts()
     gpu_type = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CUDA/ROCm not available"
 
     config = {

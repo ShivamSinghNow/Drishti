@@ -1,0 +1,65 @@
+[
+  {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "path": "/Users/shivamsingh/Desktop/CS_Portfolio_Projects/TB-Collection Model/data/tbx11k/TBX11K/imgs/health/h0001.png"
+          },
+          {
+            "type": "text",
+            "text": "Analyze this chest X-ray image for tuberculosis screening. Return the classification, visual finding, confidence, and whether referral is recommended."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Classification: healthy\nFinding: No focal lung opacity is visible on this screening image.\nConfidence: High\nReferral recommended: No"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "path": "/Users/shivamsingh/Desktop/CS_Portfolio_Projects/TB-Collection Model/data/tbx11k/TBX11K/imgs/tb/tb0005.png"
+          },
+          {
+            "type": "text",
+            "text": "Analyze this chest X-ray image for tuberculosis screening. Return the classification, visual finding, confidence, and whether referral is recommended."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Classification: active_tb\nFinding: Patchy upper-lung opacities are present, suspicious for active tuberculosis.\nConfidence: High\nReferral recommended: Yes"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "path": "/Users/shivamsingh/Desktop/CS_Portfolio_Projects/TB-Collection Model/data/tbx11k/TBX11K/imgs/sick/s0001.png"
+          },
+          {
+            "type": "text",
+            "text": "Analyze this chest X-ray image for tuberculosis screening. Return the classification, visual finding, confidence, and whether referral is recommended."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Classification: sick_but_non_tb\nFinding: Abnormal lung opacity is present but the pattern is not specific for tuberculosis.\nConfidence: Medium\nReferral recommended: Yes"
+      }
+    ]
+  }
+]
