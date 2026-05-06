@@ -15,6 +15,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `generate_jsonl.py`: writes local Qwen-VL conversation JSONL files for the TBX11K train and val splits.
 - `build_dataloader.py`: validates Qwen-VL tokenized train/val DataLoader batches with masked labels.
 - `train_qlora.py`: configures the AMD-ready QLoRA training run and supports dry-run plus setup-only validation.
+- `evaluate_checkpoint.py`: scores checkpoint predictions and writes accuracy, F1, AUC, and confusion matrix metrics.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
@@ -73,6 +74,7 @@ python build_dataloader.py --split train --batch-size 2 --limit 2
 python build_dataloader.py --split val --batch-size 2 --limit 2
 python train_qlora.py --dry-run --train-limit 2 --eval-limit 2
 python train_qlora.py --setup-only --train-limit 2 --eval-limit 2 --wandb-mode disabled --output-dir outputs/dri10-setup-validation
+python evaluate_checkpoint.py --adapter-dir outputs/dri12-run1/checkpoint-3300 --data-dir data/processed --split val --output-dir outputs/eval/dri12-run1-checkpoint-3300 --batch-size 3
 python setup_wandb.py
 ```
 

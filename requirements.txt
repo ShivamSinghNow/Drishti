@@ -6,6 +6,7 @@ accelerate
 optimum[amd]
 datasets
 wandb
+scikit-learn
 kaggle
 Pillow
 opencv-python
