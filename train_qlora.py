@@ -42,6 +42,13 @@ class TrainingComponents:
     data_collator: QwenVlDataCollator
 
 
+@dataclass(frozen=True)
+class TrainerComponents:
+    trainer: Trainer
+    components: TrainingComponents
+    model: Any
+
+
 def build_quantization_config() -> BitsAndBytesConfig:
     return BitsAndBytesConfig(
         load_in_4bit=True,
@@ -106,10 +113,17 @@ def package_available(distribution_name: str) -> bool:
     return True
 
 
+def package_version(distribution_name: str) -> str:
+    try:
+        return importlib.metadata.version(distribution_name)
+    except importlib.metadata.PackageNotFoundError:
+        return "not installed"
+
+
 def require_full_training_environment() -> None:
     missing = [
         name
-        for name in ("bitsandbytes", "optimum-amd")
+        for name in ("bitsandbytes", "optimum", "optimum-amd")
         if not package_available(name)
     ]
     if missing:
@@ -138,6 +152,47 @@ def dry_run_batch_summary(args: argparse.Namespace, components: TrainingComponen
     return tensor_shapes(batch)
 
 
+def trainable_parameter_counts(model: Any) -> tuple[int, int]:
+    trainable = 0
+    total = 0
+    for parameter in model.parameters():
+        count = parameter.numel()
+        total += count
+        if parameter.requires_grad:
+            trainable += count
+    return trainable, total
+
+
+def load_lora_model(args: argparse.Namespace, quantization_config: BitsAndBytesConfig, lora_config: LoraConfig):
+    model = Qwen2VLForConditionalGeneration.from_pretrained(
+        args.model_name,
+        quantization_config=quantization_config,
+        device_map="auto",
+        dtype=torch.bfloat16,
+        trust_remote_code=True,
+    )
+    model.config.use_cache = False
+    model = prepare_model_for_kbit_training(model)
+    return get_peft_model(model, lora_config)
+
+
+def build_trainer_components(args: argparse.Namespace) -> TrainerComponents:
+    quantization_config = build_quantization_config()
+    lora_config = build_lora_config(args.rank, args.alpha, args.lora_dropout)
+    training_args = build_training_arguments(args)
+    components = load_training_components(args)
+    model = load_lora_model(args, quantization_config, lora_config)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=components.train_dataset,
+        eval_dataset=components.eval_dataset,
+        data_collator=components.data_collator,
+        processing_class=components.processor,
+    )
+    return TrainerComponents(trainer=trainer, components=components, model=model)
+
+
 def run_dry_run(args: argparse.Namespace) -> int:
     quantization_config = build_quantization_config()
     lora_config = build_lora_config(args.rank, args.alpha, args.lora_dropout)
@@ -156,36 +211,48 @@ def run_dry_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_setup_only(args: argparse.Namespace) -> int:
+    require_full_training_environment()
+    configure_wandb(args)
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    trainer_components = build_trainer_components(args)
+    shapes = dry_run_batch_summary(args, trainer_components.components)
+    trainable, total = trainable_parameter_counts(trainer_components.model)
+
+    print("Setup-only validation complete. Trainer was built; training was not started.")
+    print(f"model_name={args.model_name}")
+    print(f"torch={torch.__version__}")
+    print(f"transformers={package_version('transformers')}")
+    print(f"peft={package_version('peft')}")
+    print(f"bitsandbytes={package_version('bitsandbytes')}")
+    print(f"optimum={package_version('optimum')}")
+    print(f"optimum_amd={package_version('optimum-amd')}")
+    print(f"train_records={len(trainer_components.components.train_dataset)}")
+    print(f"eval_records={len(trainer_components.components.eval_dataset)}")
+    print(f"trainer_output_dir={trainer_components.trainer.args.output_dir}")
+    print(f"trainer_remove_unused_columns={trainer_components.trainer.args.remove_unused_columns}")
+    print(f"trainable_parameters={trainable}")
+    print(f"total_parameters={total}")
+    if total:
+        print(f"trainable_parameter_percent={(trainable / total) * 100:.4f}")
+    for key, shape in sorted(shapes.items()):
+        print(f"batch_{key}_shape={shape}")
+    if torch.cuda.is_available():
+        print(f"peak_allocated_gb={torch.cuda.max_memory_allocated() / 1e9}")
+        print(f"peak_reserved_gb={torch.cuda.max_memory_reserved() / 1e9}")
+    return 0
+
+
 def train(args: argparse.Namespace) -> int:
     require_full_training_environment()
     configure_wandb(args)
 
-    quantization_config = build_quantization_config()
-    lora_config = build_lora_config(args.rank, args.alpha, args.lora_dropout)
-    training_args = build_training_arguments(args)
-    components = load_training_components(args)
-
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
-        args.model_name,
-        quantization_config=quantization_config,
-        device_map="auto",
-        dtype=torch.bfloat16,
-        trust_remote_code=True,
-    )
-    model.config.use_cache = False
-    model = prepare_model_for_kbit_training(model)
-    model = get_peft_model(model, lora_config)
-
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=components.train_dataset,
-        eval_dataset=components.eval_dataset,
-        data_collator=components.data_collator,
-        processing_class=components.processor,
-    )
-    trainer.train()
-    trainer.save_model()
+    trainer_components = build_trainer_components(args)
+    trainer_components.trainer.train()
+    trainer_components.trainer.save_model()
     return 0
 
 
@@ -215,8 +282,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--train-limit", default=None, type=int, help="Optional train split limit.")
     parser.add_argument("--eval-limit", default=None, type=int, help="Optional val split limit.")
     parser.add_argument("--dry-run", action="store_true", help="Validate configs and tiny batches without loading the model.")
+    parser.add_argument("--setup-only", action="store_true", help="Load the real 4-bit LoRA model and build Trainer without training.")
     args = parser.parse_args(argv)
-    if args.dry_run:
+    if args.dry_run and args.setup_only:
+        parser.error("--dry-run and --setup-only are mutually exclusive.")
+    if args.dry_run or args.setup_only:
         args.train_limit = args.train_limit or 2
         args.eval_limit = args.eval_limit or 2
         if args.wandb_mode == "online":
@@ -229,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.dry_run:
             return run_dry_run(args)
+        if args.setup_only:
+            return run_setup_only(args)
         return train(args)
     except (ImportError, RuntimeError, FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}")
