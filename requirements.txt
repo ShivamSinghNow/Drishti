@@ -1,9 +1,9 @@
 # Install torch, torchvision, and torchaudio first from the matching ROCm-specific PyTorch index.
-transformers
-peft
+transformers==5.7.0
+peft==0.19.1
 bitsandbytes
 accelerate
-optimum-amd
+optimum[amd]
 datasets
 wandb
 kaggle

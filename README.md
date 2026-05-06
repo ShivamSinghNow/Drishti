@@ -14,7 +14,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `preprocess_samples.py`: validates the RGB resize and Qwen-VL processor path on a small TBX11K batch.
 - `generate_jsonl.py`: writes local Qwen-VL conversation JSONL files for the TBX11K train and val splits.
 - `build_dataloader.py`: validates Qwen-VL tokenized train/val DataLoader batches with masked labels.
-- `train_qlora.py`: configures the AMD-ready QLoRA training run and supports local dry-run validation.
+- `train_qlora.py`: configures the AMD-ready QLoRA training run and supports dry-run plus setup-only validation.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
@@ -41,6 +41,13 @@ Then install the project dependencies:
 python -m pip install -r requirements.txt
 ```
 
+On prebuilt ROCm containers that already include AMD PyTorch, preserve the existing ROCm torch build and install only the missing DRI-10 packages:
+
+```bash
+python -m pip install transformers==5.7.0 peft==0.19.1
+python -m pip install --no-deps bitsandbytes==0.49.2 optimum==2.1.0 optimum-amd==0.1.0
+```
+
 Configure Kaggle credentials before downloading the dataset:
 
 ```bash
@@ -65,6 +72,7 @@ python generate_jsonl.py --output-dir data/processed
 python build_dataloader.py --split train --batch-size 2 --limit 2
 python build_dataloader.py --split val --batch-size 2 --limit 2
 python train_qlora.py --dry-run --train-limit 2 --eval-limit 2
+python train_qlora.py --setup-only --train-limit 2 --eval-limit 2 --wandb-mode disabled --output-dir outputs/dri10-setup-validation
 python setup_wandb.py
 ```
 
