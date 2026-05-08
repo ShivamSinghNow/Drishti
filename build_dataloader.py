@@ -48,13 +48,34 @@ def load_jsonl_dataset(
         )
 
     rows = []
+    labels = []
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             if line.strip():
-                rows.append(json.loads(line)["messages"])
+                messages = json.loads(line)["messages"]
+                rows.append(messages)
+                labels.append(extract_assistant_label(messages))
                 if limit is not None and len(rows) >= limit:
                     break
-    return Dataset.from_dict({"messages_json": [json.dumps(messages) for messages in rows]})
+    return Dataset.from_dict(
+        {
+            "messages_json": [json.dumps(messages) for messages in rows],
+            "label": labels,
+        }
+    )
+
+
+def extract_assistant_label(messages: list[dict[str, Any]]) -> str:
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        for line in content.splitlines():
+            if line.startswith("Classification: "):
+                return line.removeprefix("Classification: ").strip()
+    raise ValueError("Messages are missing an assistant Classification line.")
 
 
 def mask_prompt_labels(

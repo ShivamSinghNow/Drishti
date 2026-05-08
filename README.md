@@ -78,6 +78,54 @@ python evaluate_checkpoint.py --adapter-dir outputs/dri12-run1/checkpoint-3300 -
 python setup_wandb.py
 ```
 
+## DRI-17 Run 2: Classification Recovery
+
+Regenerate the processed JSONL after pulling this branch so training uses the shortened `Classification: <label>` assistant response:
+
+```bash
+python generate_jsonl.py --output-dir data/processed
+```
+
+Launch the balanced recovery run:
+
+```bash
+WANDB_TAGS=dri-17,run2,balanced-sick-recovery \
+WANDB_NOTES="Run #2 vs run #1: rank 32, alpha 64, dropout 0.05, lr 1.5e-4, 3 epochs, weight_decay 0.01, balanced sampler, sick_but_non_tb boost 2.0, simplified response format (Classification only), explicit label taxonomy prompt." \
+python train_qlora.py \
+  --run-name drishti-qlora-run2-balanced-sick-recovery \
+  --output-dir outputs/dri17-run2-balanced-sick-recovery \
+  --rank 32 \
+  --alpha 64 \
+  --lora-dropout 0.05 \
+  --lr 1.5e-4 \
+  --epochs 3 \
+  --batch-size 1 \
+  --grad-accum 4 \
+  --warmup-steps 150 \
+  --weight-decay 0.01 \
+  --lr-scheduler-type cosine \
+  --sampling-strategy balanced \
+  --boost-class sick_but_non_tb \
+  --boost-multiplier 2.0 \
+  --save-steps 200 \
+  --eval-steps 200 \
+  --logging-steps 10 \
+  --seed 42
+```
+
+Evaluate the saved adapter:
+
+```bash
+python evaluate_checkpoint.py \
+  --adapter-dir outputs/dri17-run2-balanced-sick-recovery \
+  --data-dir data/processed \
+  --split val \
+  --output-dir outputs/eval/dri17-run2-balanced-sick-recovery \
+  --batch-size 3
+```
+
+Run 2 is a real improvement only if val has at least 200 `sick_but_non_tb` predictions, `macro_f1 >= 0.30`, and `accuracy >= 0.50`.
+
 ## Local Validation Notes
 
 The initial setup was created on macOS arm64, where ROCm wheels and MI300X GPU access are not available. The scripts include clear failure messages for missing ROCm/CUDA, missing Kaggle credentials, and missing dataset files, then run fully on the ROCm host once those prerequisites are present.

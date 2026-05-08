@@ -51,15 +51,7 @@ class PreprocessingTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "user")
         self.assertEqual(messages[0]["content"][0]["type"], "image")
         self.assertEqual(messages[1]["role"], "assistant")
-        self.assertEqual(
-            messages[1]["content"],
-            (
-                "Classification: active_tb\n"
-                "Finding: Patchy upper-lung opacities are present, suspicious for active tuberculosis.\n"
-                "Confidence: High\n"
-                "Referral recommended: Yes"
-            ),
-        )
+        self.assertEqual(messages[1]["content"], "Classification: active_tb")
 
     def test_preprocess_record_calls_processor_with_resized_rgb_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

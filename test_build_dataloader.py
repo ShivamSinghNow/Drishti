@@ -10,6 +10,7 @@ import torch
 from build_dataloader import (
     IGNORE_INDEX,
     QwenVlDataCollator,
+    extract_assistant_label,
     load_jsonl_dataset,
     mask_prompt_labels,
     validate_batch,
@@ -97,6 +98,9 @@ class LabelMaskingTests(unittest.TestCase):
 
 
 class DatasetLoadingTests(unittest.TestCase):
+    def test_extract_assistant_label_reads_classification_line(self) -> None:
+        self.assertEqual(extract_assistant_label(sample_messages("active_tb")), "active_tb")
+
     def test_load_jsonl_dataset_from_temp_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir)
@@ -107,6 +111,7 @@ class DatasetLoadingTests(unittest.TestCase):
 
         self.assertEqual(len(dataset), 1)
         self.assertEqual(json.loads(dataset[0]["messages_json"])[1]["role"], "assistant")
+        self.assertEqual(dataset[0]["label"], "sick_but_non_tb")
 
 
 if __name__ == "__main__":

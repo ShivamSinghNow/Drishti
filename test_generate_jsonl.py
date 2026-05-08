@@ -27,15 +27,9 @@ class JsonlGenerationTests(unittest.TestCase):
     def test_jsonl_record_contains_locked_assistant_response(self) -> None:
         payload = jsonl_record(ImageRecord(Path("/tmp/sample.png"), "train", "active_tb"))
 
-        self.assertEqual(
-            payload["messages"][1]["content"],
-            (
-                "Classification: active_tb\n"
-                "Finding: Patchy upper-lung opacities are present, suspicious for active tuberculosis.\n"
-                "Confidence: High\n"
-                "Referral recommended: Yes"
-            ),
-        )
+        prompt = payload["messages"][0]["content"][1]["text"]
+        self.assertIn("active_tb, healthy, sick_but_non_tb", prompt)
+        self.assertEqual(payload["messages"][1]["content"], "Classification: active_tb")
 
     def test_write_jsonl_creates_one_object_per_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
