@@ -13,9 +13,11 @@ from generate_jsonl import jsonl_record
 from tbx11k_utils import ImageRecord
 from train_qlora import (
     LORA_TARGET_MODULES,
+    build_class_balanced_weights,
     build_lora_config,
     build_quantization_config,
     build_training_arguments,
+    dataset_labels,
     parse_args,
     package_available,
     run_dry_run,
@@ -86,6 +88,11 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertEqual(args.grad_accum, 4)
         self.assertEqual(args.epochs, 2.0)
         self.assertEqual(args.warmup_steps, 100)
+        self.assertEqual(args.weight_decay, 0.0)
+        self.assertEqual(args.seed, 42)
+        self.assertEqual(args.sampling_strategy, "natural")
+        self.assertIsNone(args.boost_class)
+        self.assertEqual(args.boost_multiplier, 1.0)
 
     def test_quantization_config_is_4bit_nf4_bf16(self) -> None:
         config = build_quantization_config()
@@ -115,7 +122,67 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertEqual(training_args.report_to, ["wandb"])
         self.assertTrue(training_args.bf16)
         self.assertEqual(training_args.lr_scheduler_type.value, "cosine")
+        self.assertEqual(training_args.weight_decay, 0.0)
+        self.assertEqual(training_args.seed, 42)
+        self.assertEqual(training_args.data_seed, 42)
         self.assertFalse(training_args.remove_unused_columns)
+
+    def test_run_two_cli_values_parse_for_balanced_recovery(self) -> None:
+        args = parse_args(
+            [
+                "--rank",
+                "32",
+                "--alpha",
+                "64",
+                "--lora-dropout",
+                "0.05",
+                "--lr",
+                "1.5e-4",
+                "--epochs",
+                "3",
+                "--warmup-steps",
+                "150",
+                "--weight-decay",
+                "0.01",
+                "--sampling-strategy",
+                "balanced",
+                "--boost-class",
+                "sick_but_non_tb",
+                "--boost-multiplier",
+                "2.0",
+                "--seed",
+                "42",
+            ]
+        )
+
+        self.assertEqual(args.rank, 32)
+        self.assertEqual(args.alpha, 64)
+        self.assertEqual(args.lora_dropout, 0.05)
+        self.assertEqual(args.lr, 1.5e-4)
+        self.assertEqual(args.epochs, 3.0)
+        self.assertEqual(args.warmup_steps, 150)
+        self.assertEqual(args.weight_decay, 0.01)
+        self.assertEqual(args.sampling_strategy, "balanced")
+        self.assertEqual(args.boost_class, "sick_but_non_tb")
+        self.assertEqual(args.boost_multiplier, 2.0)
+        self.assertEqual(args.seed, 42)
+
+    def test_balanced_weights_equalize_class_mass_and_apply_boost(self) -> None:
+        labels = ["active_tb"] * 2 + ["healthy"] * 6 + ["sick_but_non_tb"] * 6
+
+        weights = build_class_balanced_weights(labels, boost_class="sick_but_non_tb", boost_multiplier=2.0)
+        mass_by_label = {}
+        for label, weight in zip(labels, weights.tolist(), strict=True):
+            mass_by_label[label] = mass_by_label.get(label, 0.0) + weight
+
+        self.assertAlmostEqual(mass_by_label["active_tb"], 1.0)
+        self.assertAlmostEqual(mass_by_label["healthy"], 1.0)
+        self.assertAlmostEqual(mass_by_label["sick_but_non_tb"], 2.0)
+
+    def test_dataset_labels_reads_label_column(self) -> None:
+        dataset = [{"label": "healthy"}, {"label": "sick_but_non_tb"}]
+
+        self.assertEqual(dataset_labels(dataset), ["healthy", "sick_but_non_tb"])
 
     def test_dry_run_validates_without_loading_full_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

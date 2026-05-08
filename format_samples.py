@@ -14,36 +14,17 @@ OFFICIAL_TRAIN_LIST = OFFICIAL_ROOT / "lists" / "TBX11K_train.txt"
 OFFICIAL_TRAIN_ANNOTATIONS = OFFICIAL_ROOT / "annotations" / "json" / "TBX11K_train.json"
 PROMPT = (
     "Analyze this chest X-ray image for tuberculosis screening. "
-    "Return the classification, visual finding, confidence, and whether referral is recommended."
+    "Use exactly one of these labels: active_tb, healthy, sick_but_non_tb. "
+    "Return only the classification line in the form `Classification: <label>`."
 )
 
-RESPONSES = {
-    "healthy": {
-        "finding": "No focal lung opacity is visible on this screening image.",
-        "confidence": "High",
-        "referral": "No",
-    },
-    "active_tb": {
-        "finding": "Patchy upper-lung opacities are present, suspicious for active tuberculosis.",
-        "confidence": "High",
-        "referral": "Yes",
-    },
-    "sick_but_non_tb": {
-        "finding": "Abnormal lung opacity is present but the pattern is not specific for tuberculosis.",
-        "confidence": "Medium",
-        "referral": "Yes",
-    },
-}
+CLASS_LABELS = ("active_tb", "healthy", "sick_but_non_tb")
 
 
 def assistant_response(category: str) -> str:
-    response = RESPONSES[category]
-    return (
-        f"Classification: {category}\n"
-        f"Finding: {response['finding']}\n"
-        f"Confidence: {response['confidence']}\n"
-        f"Referral recommended: {response['referral']}"
-    )
+    if category not in CLASS_LABELS:
+        raise KeyError(category)
+    return f"Classification: {category}"
 
 
 def official_train_entries() -> list[str]:
