@@ -68,16 +68,19 @@ def build_class_balanced_weights(
     labels: list[str],
     boost_class: str | None = None,
     boost_multiplier: float = 1.0,
+    weight_exponent: float = 1.0,
 ) -> torch.Tensor:
     if not labels:
         raise ValueError("Balanced sampling requires at least one training sample.")
     if boost_multiplier <= 0:
         raise ValueError("--boost-multiplier must be greater than 0.")
+    if weight_exponent <= 0:
+        raise ValueError("--sampler-weight-exponent must be greater than 0.")
 
     counts = Counter(labels)
     weights = []
     for label in labels:
-        weight = 1.0 / counts[label]
+        weight = (1.0 / counts[label]) ** weight_exponent
         if boost_class is not None and label == boost_class:
             weight *= boost_multiplier
         weights.append(weight)
@@ -90,17 +93,24 @@ class ClassBalancedTrainer(Trainer):
         *args,
         boost_class: str | None = None,
         boost_multiplier: float = 1.0,
+        weight_exponent: float = 1.0,
         sampler_seed: int = 42,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.boost_class = boost_class
         self.boost_multiplier = boost_multiplier
+        self.weight_exponent = weight_exponent
         self.sampler_seed = sampler_seed
 
-    def _get_train_sampler(self):
-        labels = dataset_labels(self.train_dataset)
-        weights = build_class_balanced_weights(labels, self.boost_class, self.boost_multiplier)
+    def _get_train_sampler(self, train_dataset: Any | None = None):
+        labels = dataset_labels(train_dataset or self.train_dataset)
+        weights = build_class_balanced_weights(
+            labels,
+            self.boost_class,
+            self.boost_multiplier,
+            self.weight_exponent,
+        )
         generator = torch.Generator()
         generator.manual_seed(self.sampler_seed)
         return WeightedRandomSampler(
@@ -185,16 +195,44 @@ def package_version(distribution_name: str) -> str:
         return "not installed"
 
 
+def accelerator_backend() -> str:
+    if not torch.cuda.is_available():
+        return "none"
+    if getattr(torch.version, "hip", None):
+        return "rocm"
+    if getattr(torch.version, "cuda", None):
+        return "cuda"
+    return "cuda"
+
+
+def required_training_packages(backend: str) -> tuple[str, ...]:
+    if backend == "rocm":
+        return ("bitsandbytes", "optimum", "optimum-amd")
+    if backend == "cuda":
+        return ("bitsandbytes",)
+    return ()
+
+
 def require_full_training_environment() -> None:
+    backend = accelerator_backend()
+    if backend == "none":
+        raise RuntimeError("CUDA/ROCm is not available. Full QLoRA training must run on a GPU host.")
+
     missing = [
         name
-        for name in ("bitsandbytes", "optimum", "optimum-amd")
+        for name in required_training_packages(backend)
         if not package_available(name)
     ]
     if missing:
         raise RuntimeError(f"Missing required training package(s): {', '.join(missing)}")
-    if not torch.cuda.is_available():
-        raise RuntimeError("ROCm/CUDA is not available. Full QLoRA training must run on the AMD GPU host.")
+
+
+def sampler_weight_exponent(args: argparse.Namespace) -> float:
+    if args.sampler_weight_exponent is not None:
+        return args.sampler_weight_exponent
+    if args.sampling_strategy == "soft-balanced":
+        return 0.5
+    return 1.0
 
 
 def load_training_components(args: argparse.Namespace) -> TrainingComponents:
@@ -233,7 +271,7 @@ def load_lora_model(args: argparse.Namespace, quantization_config: BitsAndBytesC
         args.model_name,
         quantization_config=quantization_config,
         device_map="auto",
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
     model.config.use_cache = False
@@ -256,10 +294,21 @@ def build_trainer_components(args: argparse.Namespace) -> TrainerComponents:
         "processing_class": components.processor,
     }
     if args.sampling_strategy == "balanced":
+        weight_exponent = sampler_weight_exponent(args)
         trainer = ClassBalancedTrainer(
             **trainer_kwargs,
             boost_class=args.boost_class,
             boost_multiplier=args.boost_multiplier,
+            weight_exponent=weight_exponent,
+            sampler_seed=args.seed,
+        )
+    elif args.sampling_strategy == "soft-balanced":
+        weight_exponent = sampler_weight_exponent(args)
+        trainer = ClassBalancedTrainer(
+            **trainer_kwargs,
+            boost_class=args.boost_class,
+            boost_multiplier=args.boost_multiplier,
+            weight_exponent=weight_exponent,
             sampler_seed=args.seed,
         )
     else:
@@ -282,6 +331,7 @@ def run_dry_run(args: argparse.Namespace) -> int:
     print(f"quantization=4bit:{quantization_config.load_in_4bit} type:{quantization_config.bnb_4bit_quant_type}")
     print(f"lora_rank={lora_config.r} lora_alpha={lora_config.lora_alpha} targets={list(lora_config.target_modules)}")
     print(f"sampling_strategy={args.sampling_strategy} boost_class={args.boost_class} boost_multiplier={args.boost_multiplier}")
+    print(f"sampler_weight_exponent={sampler_weight_exponent(args)}")
     print(f"trainer_output_dir={training_args.output_dir}")
     for key, shape in sorted(shapes.items()):
         print(f"batch_{key}_shape={shape}")
@@ -302,6 +352,9 @@ def run_setup_only(args: argparse.Namespace) -> int:
     print("Setup-only validation complete. Trainer was built; training was not started.")
     print(f"model_name={args.model_name}")
     print(f"torch={torch.__version__}")
+    print(f"accelerator_backend={accelerator_backend()}")
+    print(f"torch_cuda={getattr(torch.version, 'cuda', None)}")
+    print(f"torch_hip={getattr(torch.version, 'hip', None)}")
     print(f"transformers={package_version('transformers')}")
     print(f"peft={package_version('peft')}")
     print(f"bitsandbytes={package_version('bitsandbytes')}")
@@ -314,6 +367,7 @@ def run_setup_only(args: argparse.Namespace) -> int:
     print(f"sampling_strategy={args.sampling_strategy}")
     print(f"boost_class={args.boost_class}")
     print(f"boost_multiplier={args.boost_multiplier}")
+    print(f"sampler_weight_exponent={sampler_weight_exponent(args)}")
     print(f"trainable_parameters={trainable}")
     print(f"total_parameters={total}")
     if total:
@@ -331,7 +385,8 @@ def train(args: argparse.Namespace) -> int:
     configure_wandb(args)
 
     trainer_components = build_trainer_components(args)
-    trainer_components.trainer.train()
+    resume_from_checkpoint = str(args.resume_from_checkpoint) if args.resume_from_checkpoint else None
+    trainer_components.trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     trainer_components.trainer.save_model()
     return 0
 
@@ -360,12 +415,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--optim", default="paged_adamw_8bit", help="Trainer optimizer.")
     parser.add_argument("--weight-decay", default=0.0, type=float, help="Trainer weight decay.")
     parser.add_argument("--seed", default=42, type=int, help="Trainer and sampler seed.")
-    parser.add_argument("--sampling-strategy", default="natural", choices=("natural", "balanced"))
+    parser.add_argument("--sampling-strategy", default="natural", choices=("natural", "balanced", "soft-balanced"))
     parser.add_argument("--boost-class", default=None, choices=CLASS_LABELS, help="Optional class to upweight under balanced sampling.")
     parser.add_argument("--boost-multiplier", default=1.0, type=float, help="Multiplier for --boost-class under balanced sampling.")
+    parser.add_argument(
+        "--sampler-weight-exponent",
+        default=None,
+        type=float,
+        help="Exponent applied to inverse class counts. Defaults to 1.0 for balanced and 0.5 for soft-balanced.",
+    )
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True, help="Use bf16 training.")
     parser.add_argument("--train-limit", default=None, type=int, help="Optional train split limit.")
     parser.add_argument("--eval-limit", default=None, type=int, help="Optional val split limit.")
+    parser.add_argument("--resume-from-checkpoint", default=None, type=Path, help="Optional Trainer checkpoint to resume from.")
     parser.add_argument("--dry-run", action="store_true", help="Validate configs and tiny batches without loading the model.")
     parser.add_argument("--setup-only", action="store_true", help="Load the real 4-bit LoRA model and build Trainer without training.")
     args = parser.parse_args(argv)
@@ -373,6 +435,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--dry-run and --setup-only are mutually exclusive.")
     if args.boost_multiplier <= 0:
         parser.error("--boost-multiplier must be greater than 0.")
+    if args.sampler_weight_exponent is not None and args.sampler_weight_exponent <= 0:
+        parser.error("--sampler-weight-exponent must be greater than 0.")
     if args.dry_run or args.setup_only:
         args.train_limit = args.train_limit or 2
         args.eval_limit = args.eval_limit or 2

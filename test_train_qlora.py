@@ -13,6 +13,7 @@ from generate_jsonl import jsonl_record
 from tbx11k_utils import ImageRecord
 from train_qlora import (
     LORA_TARGET_MODULES,
+    accelerator_backend,
     build_class_balanced_weights,
     build_lora_config,
     build_quantization_config,
@@ -20,8 +21,11 @@ from train_qlora import (
     dataset_labels,
     parse_args,
     package_available,
+    require_full_training_environment,
+    required_training_packages,
     run_dry_run,
     run_setup_only,
+    sampler_weight_exponent,
 )
 
 
@@ -93,6 +97,7 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertEqual(args.sampling_strategy, "natural")
         self.assertIsNone(args.boost_class)
         self.assertEqual(args.boost_multiplier, 1.0)
+        self.assertIsNone(args.sampler_weight_exponent)
 
     def test_quantization_config_is_4bit_nf4_bf16(self) -> None:
         config = build_quantization_config()
@@ -165,7 +170,14 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertEqual(args.sampling_strategy, "balanced")
         self.assertEqual(args.boost_class, "sick_but_non_tb")
         self.assertEqual(args.boost_multiplier, 2.0)
+        self.assertEqual(sampler_weight_exponent(args), 1.0)
         self.assertEqual(args.seed, 42)
+
+    def test_run_three_soft_balanced_defaults_to_sqrt_inverse_frequency(self) -> None:
+        args = parse_args(["--sampling-strategy", "soft-balanced"])
+
+        self.assertEqual(args.sampling_strategy, "soft-balanced")
+        self.assertEqual(sampler_weight_exponent(args), 0.5)
 
     def test_balanced_weights_equalize_class_mass_and_apply_boost(self) -> None:
         labels = ["active_tb"] * 2 + ["healthy"] * 6 + ["sick_but_non_tb"] * 6
@@ -178,6 +190,15 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertAlmostEqual(mass_by_label["active_tb"], 1.0)
         self.assertAlmostEqual(mass_by_label["healthy"], 1.0)
         self.assertAlmostEqual(mass_by_label["sick_but_non_tb"], 2.0)
+
+    def test_soft_balanced_weights_reduce_inverse_frequency_strength(self) -> None:
+        labels = ["active_tb"] * 2 + ["healthy"] * 6
+
+        balanced = build_class_balanced_weights(labels, weight_exponent=1.0)
+        soft_balanced = build_class_balanced_weights(labels, weight_exponent=0.5)
+
+        self.assertAlmostEqual(balanced[0].item() / balanced[-1].item(), 3.0)
+        self.assertAlmostEqual(soft_balanced[0].item() / soft_balanced[-1].item(), 3.0 ** 0.5)
 
     def test_dataset_labels_reads_label_column(self) -> None:
         dataset = [{"label": "healthy"}, {"label": "sick_but_non_tb"}]
@@ -259,6 +280,29 @@ class TrainingScriptTests(unittest.TestCase):
 
     def test_package_available_handles_missing_package(self) -> None:
         self.assertFalse(package_available("definitely-not-installed-drishti-package"))
+
+    def test_required_training_packages_are_backend_specific(self) -> None:
+        self.assertEqual(required_training_packages("cuda"), ("bitsandbytes",))
+        self.assertEqual(required_training_packages("rocm"), ("bitsandbytes", "optimum", "optimum-amd"))
+
+    def test_cuda_environment_does_not_require_optimum_amd(self) -> None:
+        with (
+            patch("train_qlora.accelerator_backend", return_value="cuda"),
+            patch("train_qlora.package_available", side_effect=lambda name: name == "bitsandbytes"),
+        ):
+            require_full_training_environment()
+
+    def test_rocm_environment_requires_optimum_amd(self) -> None:
+        with (
+            patch("train_qlora.accelerator_backend", return_value="rocm"),
+            patch("train_qlora.package_available", side_effect=lambda name: name in {"bitsandbytes", "optimum"}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "optimum-amd"):
+                require_full_training_environment()
+
+    def test_accelerator_backend_reports_none_without_gpu(self) -> None:
+        with patch("train_qlora.torch.cuda.is_available", return_value=False):
+            self.assertEqual(accelerator_backend(), "none")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+# AMD ROCm additions. Install after the ROCm-specific PyTorch wheel/container is active.
+-r requirements.txt
+optimum[amd]
+optimum-amd
