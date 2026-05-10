@@ -18,6 +18,11 @@ from tbx11k_utils import DATA_DIR, ImageRecord, category_from_path, is_image, lo
 MODEL_NAME = "Qwen/Qwen2-VL-7B-Instruct"
 IMAGE_SIZE = (512, 512)
 OFFICIAL_ROOT_NAME = "TBX11K"
+SIMPLIFIED_ROOT_NAME = "tbx11k-simplified"
+SIMPLIFIED_SPLIT_COUNTS = {
+    "train": {"active_tb": 600, "healthy": 3000, "sick_but_non_tb": 3000},
+    "val": {"active_tb": 200, "healthy": 800, "sick_but_non_tb": 800},
+}
 
 
 @dataclass(frozen=True)
@@ -160,8 +165,43 @@ def official_split_records(split: str, root: Path = DATA_DIR) -> list[ImageRecor
     return records
 
 
+def simplified_split_records(
+    split: str,
+    root: Path = DATA_DIR,
+    split_counts: dict[str, dict[str, int]] = SIMPLIFIED_SPLIT_COUNTS,
+) -> list[ImageRecord]:
+    image_root = root / SIMPLIFIED_ROOT_NAME / "images"
+    if split not in split_counts or not image_root.exists():
+        return []
+
+    by_category: dict[str, list[Path]] = defaultdict(list)
+    for image_path in sorted(image_root.iterdir(), key=lambda path: path.name):
+        if not is_image(image_path):
+            continue
+        category = category_from_path(image_path, root)
+        if category in split_counts[split]:
+            by_category[category].append(image_path.resolve())
+
+    records = []
+    for category, count in split_counts[split].items():
+        start = 0
+        if split == "val":
+            start = split_counts["train"].get(category, 0)
+        selected_paths = by_category[category][start : start + count]
+        if len(selected_paths) != count:
+            raise ValueError(
+                f"Simplified TBX11K split {split} expected {count} {category} images, got {len(selected_paths)}."
+            )
+        records.extend(ImageRecord(path, split, category) for path in selected_paths)
+    return records
+
+
 def split_records(split: str, root: Path = DATA_DIR) -> list[ImageRecord]:
     records = official_split_records(split, root)
+    if records:
+        return records
+
+    records = simplified_split_records(split, root)
     if records:
         return records
 
