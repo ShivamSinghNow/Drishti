@@ -13,7 +13,7 @@ from typing import Iterable
 
 DATA_DIR = Path("data/tbx11k")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
-TARGET_CATEGORIES = ("healthy", "active_tb", "latent_tb", "sick_but_non_tb")
+TARGET_CATEGORIES = ("healthy", "active_tb", "sick_but_non_tb")
 SPLITS = ("train", "val", "test")
 
 CATEGORY_ALIASES = {
@@ -281,6 +281,13 @@ def category_from_path(path: Path, root: Path = DATA_DIR) -> str | None:
         category = canonical_category(part)
         if category:
             return category
+    stem = normalize_token(path.stem)
+    if re.fullmatch(r"h\d+", stem):
+        return "healthy"
+    if re.fullmatch(r"tb\d+", stem):
+        return "active_tb"
+    if re.fullmatch(r"s\d+", stem):
+        return "sick_but_non_tb"
     return canonical_category(path.name)
 
 
