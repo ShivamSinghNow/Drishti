@@ -11,6 +11,8 @@ from evaluate_checkpoint import (
     PredictionRecord,
     candidate_messages,
     compute_metrics,
+    evaluate_run3_diagnostic_gate,
+    evaluate_run3_success_gate,
     extract_true_label,
     load_eval_samples,
     predict_label,
@@ -93,6 +95,54 @@ class CheckpointEvaluationTests(unittest.TestCase):
 
         self.assertEqual(saved_metrics["total_samples"], 1)
         self.assertEqual(saved_predictions[0]["predicted_label"], "healthy")
+
+    def test_run3_diagnostic_gate_catches_class_collapse(self) -> None:
+        predictions = [
+            PredictionRecord(index, f"/tmp/{index}.png", true_label, "sick_but_non_tb", 0.10, {}, {})
+            for index, true_label in enumerate(["active_tb", "healthy", "sick_but_non_tb", "healthy", "sick_but_non_tb"])
+        ]
+
+        gate = evaluate_run3_diagnostic_gate(compute_metrics(predictions))
+
+        self.assertFalse(gate["passed"])
+        self.assertFalse(gate["checks"]["no_zero_recall"]["passed"])
+        self.assertFalse(gate["checks"]["no_prediction_monopoly"]["passed"])
+        self.assertFalse(gate["checks"]["active_tb_predictions_minimum"]["passed"])
+
+    def test_run3_diagnostic_gate_passes_balanced_predictions(self) -> None:
+        predictions = [
+            PredictionRecord(0, "/tmp/0.png", "active_tb", "active_tb", 0.90, {}, {}),
+            PredictionRecord(1, "/tmp/1.png", "healthy", "healthy", 0.10, {}, {}),
+            PredictionRecord(2, "/tmp/2.png", "sick_but_non_tb", "sick_but_non_tb", 0.20, {}, {}),
+            PredictionRecord(3, "/tmp/3.png", "healthy", "healthy", 0.10, {}, {}),
+            PredictionRecord(4, "/tmp/4.png", "sick_but_non_tb", "sick_but_non_tb", 0.20, {}, {}),
+        ]
+
+        gate = evaluate_run3_diagnostic_gate(compute_metrics(predictions))
+
+        self.assertTrue(gate["passed"])
+
+    def test_run3_success_gate_requires_full_val_thresholds(self) -> None:
+        metrics = {
+            "total_samples": 1800,
+            "accuracy": 0.51,
+            "macro_f1": 0.31,
+            "prediction_distribution": {
+                "active_tb": 100,
+                "healthy": 850,
+                "sick_but_non_tb": 850,
+            },
+            "per_class": {
+                "active_tb": {"support": 200, "recall": 0.20},
+                "healthy": {"support": 800, "recall": 0.60},
+                "sick_but_non_tb": {"support": 800, "recall": 0.60},
+            },
+        }
+
+        self.assertTrue(evaluate_run3_success_gate(metrics)["passed"])
+
+        metrics["prediction_distribution"]["sick_but_non_tb"] = 1200
+        self.assertFalse(evaluate_run3_success_gate(metrics)["passed"])
 
 
 if __name__ == "__main__":

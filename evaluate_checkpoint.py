@@ -29,6 +29,7 @@ from preprocess_samples import MODEL_NAME
 CLASS_LABELS = ("active_tb", "healthy", "sick_but_non_tb")
 TB_POSITIVE_LABELS = ("active_tb", "latent_tb")
 DEFAULT_OUTPUT_DIR = Path("outputs/eval/checkpoint")
+RUN3_FULL_VAL_SIZE = 1800
 
 
 @dataclass(frozen=True)
@@ -286,6 +287,118 @@ def compute_metrics(predictions: list[PredictionRecord]) -> dict[str, Any]:
     }
 
 
+def _prediction_count(metrics: dict[str, Any], label: str) -> int:
+    return int(metrics.get("prediction_distribution", {}).get(label, 0))
+
+
+def _zero_recall_labels(metrics: dict[str, Any]) -> list[str]:
+    per_class = metrics.get("per_class", {})
+    labels = []
+    for label in CLASS_LABELS:
+        class_metrics = per_class.get(label, {})
+        if class_metrics.get("support", 0) > 0 and class_metrics.get("recall", 0.0) <= 0.0:
+            labels.append(label)
+    return labels
+
+
+def _scaled_count(full_val_count: int, total_samples: int, full_val_size: int) -> int:
+    if full_val_size <= 0:
+        raise ValueError("full_val_size must be greater than 0.")
+    return max(1, math.ceil((full_val_count * total_samples) / full_val_size))
+
+
+def evaluate_run3_diagnostic_gate(
+    metrics: dict[str, Any],
+    full_val_size: int = RUN3_FULL_VAL_SIZE,
+) -> dict[str, Any]:
+    total_samples = int(metrics["total_samples"])
+    max_prediction_count = max(metrics.get("prediction_distribution", {}).values(), default=0)
+    active_tb_minimum = _scaled_count(50, total_samples, full_val_size)
+    zero_recall_labels = _zero_recall_labels(metrics)
+    checks = {
+        "no_zero_recall": {
+            "passed": not zero_recall_labels,
+            "zero_recall_labels": zero_recall_labels,
+        },
+        "no_prediction_monopoly": {
+            "passed": max_prediction_count <= (0.80 * total_samples),
+            "max_prediction_count": int(max_prediction_count),
+            "max_allowed_count": int(math.floor(0.80 * total_samples)),
+        },
+        "active_tb_predictions_minimum": {
+            "passed": _prediction_count(metrics, "active_tb") >= active_tb_minimum,
+            "actual": _prediction_count(metrics, "active_tb"),
+            "minimum": active_tb_minimum,
+        },
+        "healthy_predictions_nonzero": {
+            "passed": _prediction_count(metrics, "healthy") > 0,
+            "actual": _prediction_count(metrics, "healthy"),
+        },
+    }
+    return {
+        "name": "run3_diagnostic",
+        "passed": all(check["passed"] for check in checks.values()),
+        "checks": checks,
+    }
+
+
+def evaluate_run3_success_gate(metrics: dict[str, Any]) -> dict[str, Any]:
+    zero_recall_labels = _zero_recall_labels(metrics)
+    checks = {
+        "full_val_size": {
+            "passed": int(metrics["total_samples"]) == RUN3_FULL_VAL_SIZE,
+            "actual": int(metrics["total_samples"]),
+            "expected": RUN3_FULL_VAL_SIZE,
+        },
+        "macro_f1": {
+            "passed": float(metrics["macro_f1"]) >= 0.30,
+            "actual": float(metrics["macro_f1"]),
+            "minimum": 0.30,
+        },
+        "accuracy": {
+            "passed": float(metrics["accuracy"]) >= 0.50,
+            "actual": float(metrics["accuracy"]),
+            "minimum": 0.50,
+        },
+        "sick_but_non_tb_predictions_range": {
+            "passed": 400 <= _prediction_count(metrics, "sick_but_non_tb") <= 1000,
+            "actual": _prediction_count(metrics, "sick_but_non_tb"),
+            "minimum": 400,
+            "maximum": 1000,
+        },
+        "healthy_predictions_range": {
+            "passed": 400 <= _prediction_count(metrics, "healthy") <= 1000,
+            "actual": _prediction_count(metrics, "healthy"),
+            "minimum": 400,
+            "maximum": 1000,
+        },
+        "active_tb_predictions_minimum": {
+            "passed": _prediction_count(metrics, "active_tb") >= 50,
+            "actual": _prediction_count(metrics, "active_tb"),
+            "minimum": 50,
+        },
+        "no_zero_recall": {
+            "passed": not zero_recall_labels,
+            "zero_recall_labels": zero_recall_labels,
+        },
+    }
+    return {
+        "name": "run3_full",
+        "passed": all(check["passed"] for check in checks.values()),
+        "checks": checks,
+    }
+
+
+def evaluate_gate(metrics: dict[str, Any], gate: str, full_val_size: int = RUN3_FULL_VAL_SIZE) -> dict[str, Any] | None:
+    if gate == "none":
+        return None
+    if gate == "run3-diagnostic":
+        return evaluate_run3_diagnostic_gate(metrics, full_val_size)
+    if gate == "run3-full":
+        return evaluate_run3_success_gate(metrics)
+    raise ValueError(f"Unsupported gate: {gate}")
+
+
 def write_outputs(
     output_dir: Path,
     metrics: dict[str, Any],
@@ -315,7 +428,7 @@ def load_model_and_processor(model_name: str, adapter_dir: Path | None) -> tuple
         model_name,
         quantization_config=build_quantization_config(),
         device_map="auto",
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
     if adapter_dir is not None:
@@ -333,6 +446,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, type=Path, help="Directory for eval_results.json and predictions.jsonl.")
     parser.add_argument("--batch-size", default=3, type=int, help="Number of source samples per scoring batch.")
     parser.add_argument("--limit", default=None, type=int, help="Optional sample limit for smoke tests.")
+    parser.add_argument("--gate", default="none", choices=("none", "run3-diagnostic", "run3-full"), help="Optional success gate to attach to eval results.")
+    parser.add_argument("--gate-full-val-size", default=RUN3_FULL_VAL_SIZE, type=int, help="Full validation size used for proportional diagnostic gates.")
+    parser.add_argument("--fail-on-gate-fail", action="store_true", help="Return exit code 2 when the selected gate fails.")
     return parser.parse_args(argv)
 
 
@@ -354,6 +470,9 @@ def main(argv: list[str] | None = None) -> int:
             "candidate_labels": list(CLASS_LABELS),
             "runtime_seconds": time.time() - started_at,
         }
+        gate_result = evaluate_gate(metrics, args.gate, args.gate_full_val_size)
+        if gate_result is not None:
+            metrics["gate"] = gate_result
         metrics_path, predictions_path = write_outputs(args.output_dir, metrics, predictions)
     except (ImportError, RuntimeError, FileNotFoundError, ValueError, KeyError) as exc:
         print(f"ERROR: {exc}")
@@ -363,8 +482,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"accuracy={metrics['accuracy']:.6f}")
     print(f"macro_f1={metrics['macro_f1']:.6f}")
     print(f"binary_roc_auc={metrics['binary_roc_auc']}")
+    if "gate" in metrics:
+        print(f"gate={metrics['gate']['name']} passed={metrics['gate']['passed']}")
     print(f"metrics={metrics_path}")
     print(f"predictions={predictions_path}")
+    if args.fail_on_gate_fail and metrics.get("gate") and not metrics["gate"]["passed"]:
+        return 2
     return 0
 
 

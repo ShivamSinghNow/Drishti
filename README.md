@@ -14,11 +14,23 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `preprocess_samples.py`: validates the RGB resize and Qwen-VL processor path on a small TBX11K batch.
 - `generate_jsonl.py`: writes local Qwen-VL conversation JSONL files for the TBX11K train and val splits.
 - `build_dataloader.py`: validates Qwen-VL tokenized train/val DataLoader batches with masked labels.
-- `train_qlora.py`: configures the AMD-ready QLoRA training run and supports dry-run plus setup-only validation.
+- `train_qlora.py`: configures QLoRA training on CUDA or ROCm and supports dry-run plus setup-only validation.
 - `evaluate_checkpoint.py`: scores checkpoint predictions and writes accuracy, F1, AUC, and confusion matrix metrics.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
+
+## Setup On Colab Pro With CUDA
+
+Use [notebooks/dri18_run3_colab.ipynb](notebooks/dri18_run3_colab.ipynb) for the DRI-18 run #3 workflow. The notebook installs CUDA-compatible dependencies, downloads TBX11K from Kaggle, regenerates JSONL, runs preflight checks, trains in diagnostic segments, evaluates early confusion-matrix gates, and uploads artifacts to Hugging Face.
+
+The Colab path should install the CUDA dependency set:
+
+```bash
+python -m pip install -r requirements-colab.txt
+```
+
+Colab uses NVIDIA/CUDA. Do not install `optimum-amd` or the ROCm PyTorch wheel in Colab.
 
 ## Setup On AMD MI300X With ROCm
 
@@ -39,7 +51,7 @@ python -m pip install torch torchvision torchaudio --index-url https://download.
 Then install the project dependencies:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-rocm.txt
 ```
 
 On prebuilt ROCm containers that already include AMD PyTorch, preserve the existing ROCm torch build and install only the missing DRI-10 packages:
@@ -126,6 +138,49 @@ python evaluate_checkpoint.py \
 
 Run 2 is a real improvement only if val has at least 200 `sick_but_non_tb` predictions, `macro_f1 >= 0.30`, and `accuracy >= 0.50`.
 
+## DRI-18 Run 3: Colab Diagnostic Recovery
+
+Run #3 should start in Colab with softened sampling instead of the run #2 `2.0` sick boost:
+
+```bash
+WANDB_TAGS=dri-18,run3,colab,diagnostic,soft-balanced \
+WANDB_NOTES="Run #3 diagnostic: CUDA Colab, softened balanced sampler, no sick boost, segmented early gates." \
+python train_qlora.py \
+  --run-name drishti-qlora-run3-colab-soft-balanced-diagnostic \
+  --output-dir outputs/dri18-run3-colab-soft-balanced-diagnostic \
+  --rank 32 \
+  --alpha 64 \
+  --lora-dropout 0.05 \
+  --lr 1.5e-4 \
+  --max-steps 800 \
+  --batch-size 1 \
+  --grad-accum 4 \
+  --warmup-steps 150 \
+  --weight-decay 0.01 \
+  --lr-scheduler-type cosine \
+  --sampling-strategy soft-balanced \
+  --save-steps 200 \
+  --eval-steps 200 \
+  --logging-steps 10 \
+  --seed 42
+```
+
+Evaluate diagnostic checkpoints with the run #3 gate:
+
+```bash
+python evaluate_checkpoint.py \
+  --adapter-dir outputs/dri18-run3-colab-soft-balanced-diagnostic/checkpoint-800 \
+  --data-dir data/processed \
+  --split val \
+  --output-dir outputs/eval/dri18-run3-colab-soft-balanced-diagnostic/checkpoint-800 \
+  --batch-size 3 \
+  --limit 450 \
+  --gate run3-diagnostic \
+  --fail-on-gate-fail
+```
+
+Continue only if no class has zero recall, no class owns more than 80% of predictions, and active TB predictions meet the proportional minimum.
+
 ## Local Validation Notes
 
-The initial setup was created on macOS arm64, where ROCm wheels and MI300X GPU access are not available. The scripts include clear failure messages for missing ROCm/CUDA, missing Kaggle credentials, and missing dataset files, then run fully on the ROCm host once those prerequisites are present.
+The initial setup was created on macOS arm64, where GPU training is not available. The scripts include clear failure messages for missing CUDA/ROCm, missing Kaggle credentials, and missing dataset files, then run fully on Colab CUDA or the ROCm host once those prerequisites are present.
