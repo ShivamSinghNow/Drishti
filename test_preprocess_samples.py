@@ -10,6 +10,7 @@ from preprocess_samples import (
     IMAGE_SIZE,
     load_rgb_image,
     preprocess_record,
+    simplified_split_records,
     training_messages,
     validate_preprocessing,
 )
@@ -89,6 +90,26 @@ class PreprocessingTests(unittest.TestCase):
             [sample.category for sample in samples[:3]],
             ["active_tb", "healthy", "sick_but_non_tb"],
         )
+
+    def test_simplified_split_records_use_filename_prefixes_and_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image_root = root / "tbx11k-simplified" / "images"
+            image_root.mkdir(parents=True)
+            for name in ("tb0001.png", "tb0002.png", "h0001.png", "h0002.png", "s0001.png", "s0002.png"):
+                Image.new("RGB", (16, 16), color=(1, 1, 1)).save(image_root / name)
+
+            split_counts = {
+                "train": {"active_tb": 1, "healthy": 1, "sick_but_non_tb": 1},
+                "val": {"active_tb": 1, "healthy": 1, "sick_but_non_tb": 1},
+            }
+
+            train_records = simplified_split_records("train", root, split_counts)
+            val_records = simplified_split_records("val", root, split_counts)
+
+        self.assertEqual([record.path.name for record in train_records], ["tb0001.png", "h0001.png", "s0001.png"])
+        self.assertEqual([record.path.name for record in val_records], ["tb0002.png", "h0002.png", "s0002.png"])
+        self.assertEqual([record.category for record in train_records], ["active_tb", "healthy", "sick_but_non_tb"])
 
 
 if __name__ == "__main__":

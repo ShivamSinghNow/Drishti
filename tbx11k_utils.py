@@ -337,6 +337,15 @@ def records_from_folders(root: Path = DATA_DIR) -> list[ImageRecord]:
 def load_records(root: Path = DATA_DIR) -> tuple[list[ImageRecord], list[Path], str]:
     annotation_records, used_files = records_from_annotations(root)
     if annotation_records:
+        present_categories = {record.category for record in annotation_records}
+        missing_categories = set(TARGET_CATEGORIES).difference(present_categories)
+        if missing_categories:
+            folder_records = [
+                record
+                for record in records_from_folders(root)
+                if record.category in missing_categories
+            ]
+            annotation_records.extend(folder_records)
         return annotation_records, used_files, "annotations"
     return records_from_folders(root), [], "folders"
 
