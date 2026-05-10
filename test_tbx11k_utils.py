@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from tbx11k_utils import canonical_category, canonical_split
+from tbx11k_utils import category_from_path, canonical_category, canonical_split
 
 
 class CategoryParsingTests(unittest.TestCase):
@@ -21,6 +22,13 @@ class CategoryParsingTests(unittest.TestCase):
         self.assertIsNone(canonical_category("abnormal"))
         self.assertIsNone(canonical_category("unhealthy"))
         self.assertIsNone(canonical_category("tbx11k"))
+
+    def test_simplified_kaggle_filename_prefixes_are_categories(self) -> None:
+        root = Path("data/tbx11k")
+
+        self.assertEqual(category_from_path(root / "tbx11k-simplified/images/h0001.png", root), "healthy")
+        self.assertEqual(category_from_path(root / "tbx11k-simplified/images/tb0003.png", root), "active_tb")
+        self.assertEqual(category_from_path(root / "tbx11k-simplified/images/s0001.png", root), "sick_but_non_tb")
 
 
 class SplitParsingTests(unittest.TestCase):
