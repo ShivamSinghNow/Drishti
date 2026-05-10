@@ -174,7 +174,7 @@ python evaluate_checkpoint.py \
   --split val \
   --output-dir outputs/eval/dri18-run3-colab-soft-balanced-diagnostic/checkpoint-800 \
   --batch-size 3 \
-  --limit 450 \
+  --limit-per-class 150 \
   --gate run3-diagnostic \
   --fail-on-gate-fail
 ```

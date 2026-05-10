@@ -101,6 +101,40 @@ def load_eval_samples(data_dir: Path, split: str, limit: int | None = None) -> l
     return samples
 
 
+def stratified_limit_samples(samples: list[EvalSample], limit_per_class: int) -> list[EvalSample]:
+    if limit_per_class <= 0:
+        raise ValueError("--limit-per-class must be greater than 0.")
+
+    by_label = {label: [] for label in CLASS_LABELS}
+    for sample in samples:
+        if sample.true_label not in by_label:
+            continue
+        if len(by_label[sample.true_label]) < limit_per_class:
+            by_label[sample.true_label].append(sample)
+
+    missing = {
+        label: limit_per_class - len(label_samples)
+        for label, label_samples in by_label.items()
+        if len(label_samples) < limit_per_class
+    }
+    if missing:
+        details = ", ".join(f"{label}: missing {count}" for label, count in sorted(missing.items()))
+        raise ValueError(f"Not enough samples for stratified limit. {details}")
+
+    limited = []
+    for label in CLASS_LABELS:
+        limited.extend(by_label[label])
+    return [
+        EvalSample(
+            index=index,
+            messages=sample.messages,
+            true_label=sample.true_label,
+            image_path=sample.image_path,
+        )
+        for index, sample in enumerate(limited)
+    ]
+
+
 def candidate_messages(sample: EvalSample, candidate_label: str) -> list[dict[str, Any]]:
     if candidate_label not in CLASS_LABELS:
         raise ValueError(f"Unsupported candidate label: {candidate_label}")
@@ -446,6 +480,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, type=Path, help="Directory for eval_results.json and predictions.jsonl.")
     parser.add_argument("--batch-size", default=3, type=int, help="Number of source samples per scoring batch.")
     parser.add_argument("--limit", default=None, type=int, help="Optional sample limit for smoke tests.")
+    parser.add_argument("--limit-per-class", default=None, type=int, help="Optional stratified sample limit per class.")
     parser.add_argument("--gate", default="none", choices=("none", "run3-diagnostic", "run3-full"), help="Optional success gate to attach to eval results.")
     parser.add_argument("--gate-full-val-size", default=RUN3_FULL_VAL_SIZE, type=int, help="Full validation size used for proportional diagnostic gates.")
     parser.add_argument("--fail-on-gate-fail", action="store_true", help="Return exit code 2 when the selected gate fails.")
@@ -456,7 +491,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     started_at = time.time()
     try:
-        samples = load_eval_samples(args.data_dir, args.split, args.limit)
+        samples = load_eval_samples(args.data_dir, args.split)
+        if args.limit_per_class is not None:
+            samples = stratified_limit_samples(samples, args.limit_per_class)
+        elif args.limit is not None:
+            samples = samples[: args.limit]
         model, processor = load_model_and_processor(args.model_name, args.adapter_dir)
         predictions = evaluate_samples(model, processor, samples, args.batch_size)
         metrics = compute_metrics(predictions)
@@ -466,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
             "data_dir": str(args.data_dir.resolve()),
             "split": args.split,
             "limit": args.limit,
+            "limit_per_class": args.limit_per_class,
             "batch_size": args.batch_size,
             "candidate_labels": list(CLASS_LABELS),
             "runtime_seconds": time.time() - started_at,
