@@ -17,6 +17,7 @@ from evaluate_checkpoint import (
     load_eval_samples,
     predict_label,
     softmax_scores,
+    stratified_limit_samples,
     write_outputs,
 )
 from generate_jsonl import jsonl_record
@@ -40,6 +41,21 @@ class CheckpointEvaluationTests(unittest.TestCase):
         self.assertEqual(len(samples), 1)
         self.assertEqual(samples[0].true_label, "healthy")
         self.assertEqual(samples[0].image_path, str(Path("/tmp/sample.png").resolve()))
+
+    def test_stratified_limit_samples_keeps_each_class(self) -> None:
+        samples = []
+        for label in CLASS_LABELS:
+            for index in range(3):
+                payload = jsonl_record(ImageRecord(Path(f"/tmp/{label}-{index}.png"), "val", label))
+                samples.append(EvalSample(len(samples), payload["messages"], label, f"/tmp/{label}-{index}.png"))
+
+        limited = stratified_limit_samples(samples, limit_per_class=2)
+
+        self.assertEqual(len(limited), 6)
+        self.assertEqual(
+            [sample.true_label for sample in limited],
+            ["active_tb", "active_tb", "healthy", "healthy", "sick_but_non_tb", "sick_but_non_tb"],
+        )
 
     def test_candidate_messages_use_locked_dri6_responses(self) -> None:
         payload = jsonl_record(ImageRecord(Path("/tmp/sample.png"), "val", "healthy"))
