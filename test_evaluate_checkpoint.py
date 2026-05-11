@@ -13,6 +13,7 @@ from evaluate_checkpoint import (
     compute_metrics,
     evaluate_run3_diagnostic_gate,
     evaluate_run3_success_gate,
+    evaluate_run4_diagnostic_gate,
     extract_true_label,
     load_eval_samples,
     predict_label,
@@ -135,6 +136,36 @@ class CheckpointEvaluationTests(unittest.TestCase):
         ]
 
         gate = evaluate_run3_diagnostic_gate(compute_metrics(predictions))
+
+        self.assertTrue(gate["passed"])
+
+    def test_run4_diagnostic_gate_defines_class_collapse_as_under_50_predictions(self) -> None:
+        predictions = []
+        predictions.extend(
+            PredictionRecord(index, f"/tmp/{index}.png", "active_tb", "active_tb", 0.90, {}, {})
+            for index in range(49)
+        )
+        predictions.extend(
+            PredictionRecord(49 + index, f"/tmp/h-{index}.png", "healthy", "healthy", 0.80, {}, {})
+            for index in range(201)
+        )
+        predictions.extend(
+            PredictionRecord(250 + index, f"/tmp/s-{index}.png", "sick_but_non_tb", "sick_but_non_tb", 0.80, {}, {})
+            for index in range(200)
+        )
+
+        gate = evaluate_run4_diagnostic_gate(compute_metrics(predictions))
+
+        self.assertFalse(gate["passed"])
+        self.assertFalse(gate["checks"]["minimum_predictions_per_class"]["passed"])
+        self.assertEqual(gate["checks"]["minimum_predictions_per_class"]["by_class"]["active_tb"]["actual"], 49)
+
+    def test_run4_diagnostic_gate_passes_when_each_class_has_at_least_50_predictions(self) -> None:
+        predictions = []
+        for index, label in enumerate(["active_tb"] * 50 + ["healthy"] * 200 + ["sick_but_non_tb"] * 200):
+            predictions.append(PredictionRecord(index, f"/tmp/{index}.png", label, label, 0.90, {}, {}))
+
+        gate = evaluate_run4_diagnostic_gate(compute_metrics(predictions))
 
         self.assertTrue(gate["passed"])
 

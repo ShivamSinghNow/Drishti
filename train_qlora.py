@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import os
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -33,7 +34,10 @@ from preprocess_samples import MODEL_NAME
 
 PROJECT_NAME = "tbx11k-qwen-vl-finetuning"
 DEFAULT_OUTPUT_DIR = Path("outputs/qlora-run")
-LORA_TARGET_MODULES = ("q_proj", "k_proj", "v_proj", "o_proj")
+LANGUAGE_LORA_TARGET_MODULES = ("q_proj", "k_proj", "v_proj", "o_proj")
+LORA_TARGET_MODULES = LANGUAGE_LORA_TARGET_MODULES
+LORA_TARGET_SCOPES = ("language", "language-vision-attn")
+VISION_ATTENTION_TARGET_RE = re.compile(r"^(?:.*\.)?visual\.blocks\.\d+\.attn\.(?:qkv|proj)$")
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,7 @@ class TrainerComponents:
     trainer: Trainer
     components: TrainingComponents
     model: Any
+    lora_config: LoraConfig
 
 
 def dataset_labels(dataset: Any) -> list[str]:
@@ -130,13 +135,54 @@ def build_quantization_config() -> BitsAndBytesConfig:
     )
 
 
-def build_lora_config(rank: int, alpha: int, dropout: float) -> LoraConfig:
+def is_vision_attention_lora_target(module_name: str) -> bool:
+    return bool(VISION_ATTENTION_TARGET_RE.fullmatch(module_name))
+
+
+def resolve_lora_target_modules(model: Any | None, target_scope: str) -> tuple[str, ...]:
+    if target_scope == "language":
+        return LORA_TARGET_MODULES
+    if target_scope != "language-vision-attn":
+        raise ValueError(f"Unsupported LoRA target scope: {target_scope}")
+    if model is None:
+        raise ValueError("language-vision-attn target resolution requires a loaded model.")
+
+    vision_targets = tuple(
+        module_name
+        for module_name, _module in model.named_modules()
+        if is_vision_attention_lora_target(module_name)
+    )
+    if not vision_targets:
+        raise ValueError("No Qwen2-VL vision attention modules matched visual.blocks.*.attn.(qkv|proj).")
+    return LORA_TARGET_MODULES + vision_targets
+
+
+def build_lora_config(
+    rank: int,
+    alpha: int,
+    dropout: float,
+    target_modules: tuple[str, ...] | list[str] | None = None,
+    vision_rank: int | None = None,
+    vision_alpha: int | None = None,
+) -> LoraConfig:
+    resolved_targets = tuple(target_modules or LORA_TARGET_MODULES)
+    rank_pattern = {}
+    alpha_pattern = {}
+    for module_name in resolved_targets:
+        if is_vision_attention_lora_target(module_name):
+            if vision_rank is not None:
+                rank_pattern[module_name] = vision_rank
+            if vision_alpha is not None:
+                alpha_pattern[module_name] = vision_alpha
+
     return LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=rank,
         lora_alpha=alpha,
         lora_dropout=dropout,
-        target_modules=list(LORA_TARGET_MODULES),
+        target_modules=list(resolved_targets),
+        rank_pattern=rank_pattern,
+        alpha_pattern=alpha_pattern,
         bias="none",
         inference_mode=False,
     )
@@ -244,6 +290,11 @@ def load_training_components(args: argparse.Namespace) -> TrainingComponents:
 
 
 def dry_run_batch_summary(args: argparse.Namespace, components: TrainingComponents) -> dict[str, tuple[int, ...]]:
+    batch = load_one_train_batch(args, components)
+    return tensor_shapes(batch)
+
+
+def load_one_train_batch(args: argparse.Namespace, components: TrainingComponents) -> dict[str, Any]:
     dataloader = DataLoader(
         components.train_dataset,
         batch_size=args.batch_size,
@@ -252,7 +303,7 @@ def dry_run_batch_summary(args: argparse.Namespace, components: TrainingComponen
     )
     batch = next(iter(dataloader))
     validate_batch("train", batch)
-    return tensor_shapes(batch)
+    return batch
 
 
 def trainable_parameter_counts(model: Any) -> tuple[int, int]:
@@ -266,7 +317,19 @@ def trainable_parameter_counts(model: Any) -> tuple[int, int]:
     return trainable, total
 
 
-def load_lora_model(args: argparse.Namespace, quantization_config: BitsAndBytesConfig, lora_config: LoraConfig):
+def vision_lora_rank(args: argparse.Namespace) -> int | None:
+    if args.lora_target_scope != "language-vision-attn":
+        return None
+    return args.vision_rank if args.vision_rank is not None else args.rank
+
+
+def vision_lora_alpha(args: argparse.Namespace) -> int | None:
+    if args.lora_target_scope != "language-vision-attn":
+        return None
+    return args.vision_alpha if args.vision_alpha is not None else args.alpha
+
+
+def load_lora_model(args: argparse.Namespace, quantization_config: BitsAndBytesConfig) -> tuple[Any, LoraConfig]:
     model = Qwen2VLForConditionalGeneration.from_pretrained(
         args.model_name,
         quantization_config=quantization_config,
@@ -276,15 +339,23 @@ def load_lora_model(args: argparse.Namespace, quantization_config: BitsAndBytesC
     )
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model)
-    return get_peft_model(model, lora_config)
+    target_modules = resolve_lora_target_modules(model, args.lora_target_scope)
+    lora_config = build_lora_config(
+        args.rank,
+        args.alpha,
+        args.lora_dropout,
+        target_modules=target_modules,
+        vision_rank=vision_lora_rank(args),
+        vision_alpha=vision_lora_alpha(args),
+    )
+    return get_peft_model(model, lora_config), lora_config
 
 
 def build_trainer_components(args: argparse.Namespace) -> TrainerComponents:
     quantization_config = build_quantization_config()
-    lora_config = build_lora_config(args.rank, args.alpha, args.lora_dropout)
     training_args = build_training_arguments(args)
     components = load_training_components(args)
-    model = load_lora_model(args, quantization_config, lora_config)
+    model, lora_config = load_lora_model(args, quantization_config)
     trainer_kwargs = {
         "model": model,
         "args": training_args,
@@ -315,7 +386,7 @@ def build_trainer_components(args: argparse.Namespace) -> TrainerComponents:
         trainer = Trainer(
             **trainer_kwargs,
         )
-    return TrainerComponents(trainer=trainer, components=components, model=model)
+    return TrainerComponents(trainer=trainer, components=components, model=model, lora_config=lora_config)
 
 
 def run_dry_run(args: argparse.Namespace) -> int:
@@ -329,13 +400,34 @@ def run_dry_run(args: argparse.Namespace) -> int:
     print(f"model_name={args.model_name}")
     print(f"train_records={len(components.train_dataset)} eval_records={len(components.eval_dataset)}")
     print(f"quantization=4bit:{quantization_config.load_in_4bit} type:{quantization_config.bnb_4bit_quant_type}")
+    print(f"lora_target_scope={args.lora_target_scope}")
     print(f"lora_rank={lora_config.r} lora_alpha={lora_config.lora_alpha} targets={list(lora_config.target_modules)}")
+    if args.lora_target_scope == "language-vision-attn":
+        print("vision_attention_targets=resolved during setup-only/full training")
+        print(f"vision_lora_rank={vision_lora_rank(args)} vision_lora_alpha={vision_lora_alpha(args)}")
     print(f"sampling_strategy={args.sampling_strategy} boost_class={args.boost_class} boost_multiplier={args.boost_multiplier}")
     print(f"sampler_weight_exponent={sampler_weight_exponent(args)}")
     print(f"trainer_output_dir={training_args.output_dir}")
     for key, shape in sorted(shapes.items()):
         print(f"batch_{key}_shape={shape}")
     return 0
+
+
+def run_setup_backward_check(args: argparse.Namespace, trainer_components: TrainerComponents) -> float:
+    batch = load_one_train_batch(args, trainer_components.components)
+    model = trainer_components.model
+    model.train()
+    model.zero_grad(set_to_none=True)
+    prepared_batch = trainer_components.trainer._prepare_inputs(batch)
+    outputs = model(**prepared_batch)
+    loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
+    if loss is None:
+        raise RuntimeError("Setup backward check could not find a loss in model outputs.")
+    loss.backward()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    loss_value = float(loss.detach().cpu())
+    return loss_value
 
 
 def run_setup_only(args: argparse.Namespace) -> int:
@@ -348,6 +440,9 @@ def run_setup_only(args: argparse.Namespace) -> int:
     trainer_components = build_trainer_components(args)
     shapes = dry_run_batch_summary(args, trainer_components.components)
     trainable, total = trainable_parameter_counts(trainer_components.model)
+    setup_backward_loss = None
+    if args.setup_backward_check:
+        setup_backward_loss = run_setup_backward_check(args, trainer_components)
 
     print("Setup-only validation complete. Trainer was built; training was not started.")
     print(f"model_name={args.model_name}")
@@ -364,6 +459,14 @@ def run_setup_only(args: argparse.Namespace) -> int:
     print(f"eval_records={len(trainer_components.components.eval_dataset)}")
     print(f"trainer_output_dir={trainer_components.trainer.args.output_dir}")
     print(f"trainer_remove_unused_columns={trainer_components.trainer.args.remove_unused_columns}")
+    print(f"lora_target_scope={args.lora_target_scope}")
+    print(f"lora_target_modules_count={len(trainer_components.lora_config.target_modules)}")
+    for module_name in list(trainer_components.lora_config.target_modules)[:12]:
+        print(f"lora_target_module={module_name}")
+    if len(trainer_components.lora_config.target_modules) > 12:
+        print("lora_target_module=...")
+    print(f"vision_lora_rank={vision_lora_rank(args)}")
+    print(f"vision_lora_alpha={vision_lora_alpha(args)}")
     print(f"sampling_strategy={args.sampling_strategy}")
     print(f"boost_class={args.boost_class}")
     print(f"boost_multiplier={args.boost_multiplier}")
@@ -372,6 +475,9 @@ def run_setup_only(args: argparse.Namespace) -> int:
     print(f"total_parameters={total}")
     if total:
         print(f"trainable_parameter_percent={(trainable / total) * 100:.4f}")
+    if setup_backward_loss is not None:
+        print("setup_backward_check=passed")
+        print(f"setup_backward_loss={setup_backward_loss:.6f}")
     for key, shape in sorted(shapes.items()):
         print(f"batch_{key}_shape={shape}")
     if torch.cuda.is_available():
@@ -402,6 +508,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--lr", default=2e-4, type=float, help="Learning rate.")
     parser.add_argument("--rank", default=16, type=int, help="LoRA rank.")
     parser.add_argument("--alpha", default=32, type=int, help="LoRA alpha.")
+    parser.add_argument("--vision-rank", default=None, type=int, help="Optional LoRA rank override for vision attention targets.")
+    parser.add_argument("--vision-alpha", default=None, type=int, help="Optional LoRA alpha override for vision attention targets.")
+    parser.add_argument("--lora-target-scope", default="language", choices=LORA_TARGET_SCOPES, help="LoRA modules to adapt.")
     parser.add_argument("--lora-dropout", default=0.05, type=float, help="LoRA dropout.")
     parser.add_argument("--batch-size", default=1, type=int, help="Per-device batch size.")
     parser.add_argument("--grad-accum", default=4, type=int, help="Gradient accumulation steps.")
@@ -430,9 +539,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--resume-from-checkpoint", default=None, type=Path, help="Optional Trainer checkpoint to resume from.")
     parser.add_argument("--dry-run", action="store_true", help="Validate configs and tiny batches without loading the model.")
     parser.add_argument("--setup-only", action="store_true", help="Load the real 4-bit LoRA model and build Trainer without training.")
+    parser.add_argument("--setup-backward-check", action="store_true", help="With --setup-only, run one real forward/backward pass to catch OOM before training.")
     args = parser.parse_args(argv)
     if args.dry_run and args.setup_only:
         parser.error("--dry-run and --setup-only are mutually exclusive.")
+    if args.setup_backward_check and not args.setup_only:
+        parser.error("--setup-backward-check requires --setup-only.")
+    if args.vision_rank is not None and args.vision_rank <= 0:
+        parser.error("--vision-rank must be greater than 0.")
+    if args.vision_alpha is not None and args.vision_alpha <= 0:
+        parser.error("--vision-alpha must be greater than 0.")
+    if args.lora_target_scope != "language-vision-attn" and (args.vision_rank is not None or args.vision_alpha is not None):
+        parser.error("--vision-rank and --vision-alpha require --lora-target-scope language-vision-attn.")
     if args.boost_multiplier <= 0:
         parser.error("--boost-multiplier must be greater than 0.")
     if args.sampler_weight_exponent is not None and args.sampler_weight_exponent <= 0:

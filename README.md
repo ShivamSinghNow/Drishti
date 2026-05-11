@@ -24,6 +24,8 @@ This repository contains setup utilities only. It does not include the TBX11K da
 
 Use [notebooks/dri18_run3_colab.ipynb](notebooks/dri18_run3_colab.ipynb) for the DRI-18 run #3 workflow. The notebook installs CUDA-compatible dependencies, downloads TBX11K from Kaggle, regenerates JSONL, runs preflight checks, trains in diagnostic segments, evaluates early confusion-matrix gates, and uploads artifacts to Hugging Face.
 
+Use [notebooks/dri19_run4_vision_lora_colab.ipynb](notebooks/dri19_run4_vision_lora_colab.ipynb) for the DRI-19 run #4 vision-LoRA ablation. It reuses the run #3 recipe with seed `42`, adds exact vision-attention LoRA targets, runs a setup-only forward/backward OOM check, and falls back to vision rank `16` / alpha `32` only if rank `32` OOMs.
+
 The Colab path should install the CUDA dependency set:
 
 ```bash
@@ -180,6 +182,25 @@ python evaluate_checkpoint.py \
 ```
 
 Continue only if no class has zero recall, no class owns more than 80% of predictions, and active TB predictions meet the proportional minimum.
+
+## DRI-19 Run 4: Vision-LoRA Ablation
+
+Run #4 keeps run #3 fixed and changes only the LoRA target scope:
+
+```bash
+python train_qlora.py \
+  --setup-only \
+  --setup-backward-check \
+  --train-limit 2 \
+  --eval-limit 2 \
+  --wandb-mode disabled \
+  --lora-target-scope language-vision-attn \
+  --rank 32 \
+  --alpha 64 \
+  --seed 42
+```
+
+If that setup check OOMs on Colab, retry with `--vision-rank 16 --vision-alpha 32`. The run #4 notebook evaluates diagnostic checkpoints at steps `400` and `800`; diagnostic class collapse means fewer than `50` predictions for any class on the stratified diagnostic subset.
 
 ## Local Validation Notes
 

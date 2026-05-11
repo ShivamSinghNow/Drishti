@@ -23,9 +23,12 @@ from train_qlora import (
     package_available,
     require_full_training_environment,
     required_training_packages,
+    resolve_lora_target_modules,
     run_dry_run,
     run_setup_only,
     sampler_weight_exponent,
+    vision_lora_alpha,
+    vision_lora_rank,
 )
 
 
@@ -51,14 +54,31 @@ class FakeProcessor:
         }
 
 
-class FakeModel:
+class FakeModel(torch.nn.Module):
     def __init__(self) -> None:
+        super().__init__()
         self.config = types.SimpleNamespace(use_cache=True)
         self._frozen = torch.nn.Parameter(torch.ones(2, 2), requires_grad=False)
         self._trainable = torch.nn.Parameter(torch.ones(3, 2), requires_grad=True)
 
-    def parameters(self):
-        return iter((self._frozen, self._trainable))
+    def forward(self, **kwargs):
+        return types.SimpleNamespace(loss=self._trainable.sum())
+
+
+class FakeVisionTargetModel:
+    def named_modules(self):
+        return iter(
+            (
+                ("", self),
+                ("visual.patch_embed.proj", object()),
+                ("visual.blocks.0.attn.qkv", object()),
+                ("visual.blocks.0.attn.proj", object()),
+                ("visual.blocks.0.mlp.gate_proj", object()),
+                ("visual.blocks.1.attn.qkv", object()),
+                ("visual.blocks.1.attn.proj", object()),
+                ("model.layers.0.self_attn.q_proj", object()),
+            )
+        )
 
 
 class FakeTrainer:
@@ -74,6 +94,9 @@ class FakeTrainer:
 
     def save_model(self) -> None:
         raise AssertionError("setup-only must not save checkpoints")
+
+    def _prepare_inputs(self, batch):
+        return batch
 
 
 def write_split(data_dir: Path, split: str, category: str) -> None:
@@ -98,6 +121,7 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertIsNone(args.boost_class)
         self.assertEqual(args.boost_multiplier, 1.0)
         self.assertIsNone(args.sampler_weight_exponent)
+        self.assertEqual(args.lora_target_scope, "language")
 
     def test_quantization_config_is_4bit_nf4_bf16(self) -> None:
         config = build_quantization_config()
@@ -114,6 +138,36 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertEqual(config.lora_alpha, 32)
         self.assertEqual(set(config.target_modules), set(LORA_TARGET_MODULES))
         self.assertNotIn("vision", set(config.target_modules))
+
+    def test_language_vision_attention_scope_resolves_exact_vision_targets(self) -> None:
+        targets = resolve_lora_target_modules(FakeVisionTargetModel(), "language-vision-attn")
+
+        self.assertIn("q_proj", targets)
+        self.assertIn("visual.blocks.0.attn.qkv", targets)
+        self.assertIn("visual.blocks.0.attn.proj", targets)
+        self.assertIn("visual.blocks.1.attn.qkv", targets)
+        self.assertIn("visual.blocks.1.attn.proj", targets)
+        self.assertNotIn("visual.patch_embed.proj", targets)
+        self.assertNotIn("visual.blocks.0.mlp.gate_proj", targets)
+        self.assertNotIn("proj", targets)
+
+    def test_vision_rank_fallback_uses_rank_and_alpha_patterns(self) -> None:
+        targets = resolve_lora_target_modules(FakeVisionTargetModel(), "language-vision-attn")
+        config = build_lora_config(
+            rank=32,
+            alpha=64,
+            dropout=0.05,
+            target_modules=targets,
+            vision_rank=16,
+            vision_alpha=32,
+        )
+
+        self.assertEqual(config.r, 32)
+        self.assertEqual(config.lora_alpha, 64)
+        self.assertEqual(config.rank_pattern["visual.blocks.0.attn.qkv"], 16)
+        self.assertEqual(config.rank_pattern["visual.blocks.1.attn.proj"], 16)
+        self.assertEqual(config.alpha_pattern["visual.blocks.0.attn.proj"], 32)
+        self.assertNotIn("q_proj", config.rank_pattern)
 
     def test_training_arguments_include_checkpointing_wandb_and_bf16(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -177,6 +231,34 @@ class TrainingScriptTests(unittest.TestCase):
         args = parse_args(["--sampling-strategy", "soft-balanced"])
 
         self.assertEqual(args.sampling_strategy, "soft-balanced")
+        self.assertEqual(sampler_weight_exponent(args), 0.5)
+
+    def test_run_four_vision_lora_cli_values_parse_for_clean_ablation(self) -> None:
+        args = parse_args(
+            [
+                "--lora-target-scope",
+                "language-vision-attn",
+                "--rank",
+                "32",
+                "--alpha",
+                "64",
+                "--vision-rank",
+                "16",
+                "--vision-alpha",
+                "32",
+                "--sampling-strategy",
+                "soft-balanced",
+                "--seed",
+                "42",
+            ]
+        )
+
+        self.assertEqual(args.lora_target_scope, "language-vision-attn")
+        self.assertEqual(args.rank, 32)
+        self.assertEqual(args.alpha, 64)
+        self.assertEqual(vision_lora_rank(args), 16)
+        self.assertEqual(vision_lora_alpha(args), 32)
+        self.assertEqual(args.seed, 42)
         self.assertEqual(sampler_weight_exponent(args), 0.5)
 
     def test_balanced_weights_equalize_class_mass_and_apply_boost(self) -> None:
@@ -270,6 +352,45 @@ class TrainingScriptTests(unittest.TestCase):
         self.assertFalse(fake_model.config.use_cache)
         prepare.assert_called_once_with(fake_model)
         get_peft.assert_called_once()
+
+    def test_setup_only_backward_check_runs_one_forward_backward_without_training(self) -> None:
+        FakeTrainer.train_called = False
+        fake_model = FakeModel()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            write_split(data_dir, "train", "healthy")
+            write_split(data_dir, "val", "active_tb")
+            args = parse_args(
+                [
+                    "--setup-only",
+                    "--setup-backward-check",
+                    "--data-dir",
+                    str(data_dir),
+                    "--output-dir",
+                    str(data_dir / "outputs"),
+                    "--batch-size",
+                    "1",
+                    "--train-limit",
+                    "1",
+                    "--eval-limit",
+                    "1",
+                ]
+            )
+
+            with (
+                patch("train_qlora.require_full_training_environment"),
+                patch("train_qlora.AutoProcessor.from_pretrained", return_value=FakeProcessor()),
+                patch("train_qlora.Qwen2VLForConditionalGeneration.from_pretrained", return_value=fake_model),
+                patch("train_qlora.prepare_model_for_kbit_training", return_value=fake_model),
+                patch("train_qlora.get_peft_model", return_value=fake_model),
+                patch("train_qlora.Trainer", FakeTrainer),
+            ):
+                exit_code = run_setup_only(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(FakeTrainer.train_called)
+        self.assertIsNotNone(fake_model._trainable.grad)
 
     def test_setup_only_defaults_to_disabled_wandb_and_tiny_limits(self) -> None:
         args = parse_args(["--setup-only"])
