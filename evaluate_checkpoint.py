@@ -376,6 +376,41 @@ def evaluate_run3_diagnostic_gate(
     }
 
 
+def evaluate_run4_diagnostic_gate(metrics: dict[str, Any]) -> dict[str, Any]:
+    total_samples = int(metrics["total_samples"])
+    max_prediction_count = max(metrics.get("prediction_distribution", {}).values(), default=0)
+    zero_recall_labels = _zero_recall_labels(metrics)
+    minimum_predictions_by_class = {
+        label: {
+            "passed": _prediction_count(metrics, label) >= 50,
+            "actual": _prediction_count(metrics, label),
+            "minimum": 50,
+        }
+        for label in CLASS_LABELS
+    }
+    checks = {
+        "no_zero_recall": {
+            "passed": not zero_recall_labels,
+            "zero_recall_labels": zero_recall_labels,
+        },
+        "no_prediction_monopoly": {
+            "passed": max_prediction_count <= (0.80 * total_samples),
+            "max_prediction_count": int(max_prediction_count),
+            "max_allowed_count": int(math.floor(0.80 * total_samples)),
+        },
+        "minimum_predictions_per_class": {
+            "passed": all(check["passed"] for check in minimum_predictions_by_class.values()),
+            "minimum": 50,
+            "by_class": minimum_predictions_by_class,
+        },
+    }
+    return {
+        "name": "run4_diagnostic",
+        "passed": all(check["passed"] for check in checks.values()),
+        "checks": checks,
+    }
+
+
 def evaluate_run3_success_gate(metrics: dict[str, Any]) -> dict[str, Any]:
     zero_recall_labels = _zero_recall_labels(metrics)
     checks = {
@@ -428,6 +463,8 @@ def evaluate_gate(metrics: dict[str, Any], gate: str, full_val_size: int = RUN3_
         return None
     if gate == "run3-diagnostic":
         return evaluate_run3_diagnostic_gate(metrics, full_val_size)
+    if gate == "run4-diagnostic":
+        return evaluate_run4_diagnostic_gate(metrics)
     if gate == "run3-full":
         return evaluate_run3_success_gate(metrics)
     raise ValueError(f"Unsupported gate: {gate}")
@@ -481,7 +518,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--batch-size", default=3, type=int, help="Number of source samples per scoring batch.")
     parser.add_argument("--limit", default=None, type=int, help="Optional sample limit for smoke tests.")
     parser.add_argument("--limit-per-class", default=None, type=int, help="Optional stratified sample limit per class.")
-    parser.add_argument("--gate", default="none", choices=("none", "run3-diagnostic", "run3-full"), help="Optional success gate to attach to eval results.")
+    parser.add_argument("--gate", default="none", choices=("none", "run3-diagnostic", "run4-diagnostic", "run3-full"), help="Optional success gate to attach to eval results.")
     parser.add_argument("--gate-full-val-size", default=RUN3_FULL_VAL_SIZE, type=int, help="Full validation size used for proportional diagnostic gates.")
     parser.add_argument("--fail-on-gate-fail", action="store_true", help="Return exit code 2 when the selected gate fails.")
     return parser.parse_args(argv)
