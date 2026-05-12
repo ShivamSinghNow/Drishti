@@ -16,6 +16,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `build_dataloader.py`: validates Qwen-VL tokenized train/val DataLoader batches with masked labels.
 - `train_qlora.py`: configures QLoRA training on CUDA or ROCm and supports dry-run plus setup-only validation.
 - `evaluate_checkpoint.py`: scores checkpoint predictions and writes accuracy, F1, AUC, and confusion matrix metrics.
+- `generate_gradcam.py`: generates Grad-CAM heatmaps and overlays from the Qwen2-VL vision encoder.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
@@ -201,6 +202,22 @@ python train_qlora.py \
 ```
 
 If that setup check OOMs on Colab, retry with `--vision-rank 16 --vision-alpha 32`. The run #4 notebook evaluates diagnostic checkpoints at steps `400` and `800`; diagnostic class collapse means fewer than `50` predictions for any class on the stratified diagnostic subset.
+
+## Grad-CAM Vision Encoder Overlays
+
+Generate a demo heatmap from a fine-tuned adapter:
+
+```bash
+python generate_gradcam.py \
+  --adapter-dir outputs/dri19-run4-vision-lora-ablation/checkpoint-4950 \
+  --data-dir data/processed \
+  --split val \
+  --sample-index 0 \
+  --target-label predicted \
+  --output-dir outputs/gradcam/run4-checkpoint-4950
+```
+
+The script hooks the selected Qwen2-VL vision transformer block, scores the three locked classification responses, backprops from the selected class log-likelihood, and writes a heatmap PNG, overlay PNG, and metadata JSON. It uses the last vision block by default and falls back to a gradient-activation map if vanilla Grad-CAM is flat.
 
 ## Local Validation Notes
 
