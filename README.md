@@ -17,6 +17,7 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `train_qlora.py`: configures QLoRA training on CUDA or ROCm and supports dry-run plus setup-only validation.
 - `evaluate_checkpoint.py`: scores checkpoint predictions and writes accuracy, F1, AUC, and confusion matrix metrics.
 - `generate_gradcam.py`: generates Grad-CAM heatmaps and overlays from the Qwen2-VL vision encoder.
+- `heatmap_rendering.py`: renders Grad-CAM maps as readable overlays and standalone demo panels.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
 - `tbx11k_utils.py`: shared dataset discovery and annotation parsing helpers.
 - `test_tbx11k_utils.py`: regression tests for TBX11K category and split parsing.
@@ -214,10 +215,12 @@ python generate_gradcam.py \
   --split val \
   --sample-index 0 \
   --target-label predicted \
+  --colormap viridis \
+  --overlay-alpha 0.38 \
   --output-dir outputs/gradcam/run4-checkpoint-4950
 ```
 
-The script hooks the selected Qwen2-VL vision transformer block, scores the three locked classification responses, backprops from the selected class log-likelihood, and writes a heatmap PNG, overlay PNG, and metadata JSON. It uses the last vision block by default and falls back to a gradient-activation map if vanilla Grad-CAM is flat.
+The script hooks the selected Qwen2-VL vision transformer block, scores the three locked classification responses, backprops from the selected class log-likelihood, and writes a heatmap PNG, readable overlay PNG, demo panel PNG with side legend, and metadata JSON. It uses the last vision block by default, renders with conservative viridis defaults, suppresses black X-ray borders, and falls back to a gradient-activation map if vanilla Grad-CAM is flat.
 
 ## Local Validation Notes
 

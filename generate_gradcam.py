@@ -7,9 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
-import torch.nn.functional as F
 from PIL import Image
 
 from build_dataloader import DEFAULT_DATA_DIR, mask_prompt_labels
@@ -23,6 +21,13 @@ from evaluate_checkpoint import (
     model_device,
     move_tensors,
     score_sample_batch,
+)
+from heatmap_rendering import (
+    SUPPORTED_COLORMAPS,
+    HeatmapRenderConfig,
+    render_heatmap_image,
+    render_heatmap_overlay,
+    render_heatmap_panel,
 )
 from preprocess_samples import MODEL_NAME
 
@@ -48,8 +53,10 @@ class GradCamMetadata:
     spatial_shape: tuple[int, int]
     output_heatmap: str
     output_overlay: str
+    output_panel: str
     output_metadata: str
     cam_method: str
+    render_config: dict[str, Any]
 
 
 class ActivationGradientCapture:
@@ -198,27 +205,6 @@ def token_cam_to_spatial_map(token_cam: torch.Tensor, grid_thw: tuple[int, int, 
     return normalize_tensor(spatial)
 
 
-def resize_heatmap(heatmap: torch.Tensor, image_size: tuple[int, int]) -> np.ndarray:
-    tensor = heatmap.detach().float().cpu().unsqueeze(0).unsqueeze(0)
-    resized = F.interpolate(tensor, size=(image_size[1], image_size[0]), mode="bilinear", align_corners=False)
-    return resized.squeeze().clamp(0, 1).numpy()
-
-
-def heatmap_to_rgb(heatmap: np.ndarray) -> Image.Image:
-    heatmap = np.clip(heatmap, 0.0, 1.0)
-    red = (255 * heatmap).astype(np.uint8)
-    green = (255 * np.sqrt(heatmap)).astype(np.uint8)
-    blue = (80 * (1.0 - heatmap)).astype(np.uint8)
-    return Image.fromarray(np.stack([red, green, blue], axis=-1), mode="RGB")
-
-
-def overlay_heatmap(image: Image.Image, heatmap: np.ndarray, alpha: float) -> Image.Image:
-    if not 0.0 <= alpha <= 1.0:
-        raise ValueError("--overlay-alpha must be between 0 and 1.")
-    heatmap_image = heatmap_to_rgb(heatmap).resize(image.size)
-    return Image.blend(image.convert("RGB"), heatmap_image, alpha=alpha)
-
-
 def generate_gradcam(
     model: Any,
     processor: Any,
@@ -227,6 +213,7 @@ def generate_gradcam(
     target_label: str = "predicted",
     layer_index: int = -1,
     overlay_alpha: float = 0.45,
+    render_config: HeatmapRenderConfig | None = None,
 ) -> GradCamMetadata:
     if sample.image_path is None:
         raise ValueError("Selected sample has no image path.")
@@ -260,17 +247,29 @@ def generate_gradcam(
     spatial_map = token_cam_to_spatial_map(token_cam, grid_thw)
 
     original_image = Image.open(image_path).convert("RGB")
-    resized_heatmap = resize_heatmap(spatial_map, original_image.size)
-    heatmap_image = heatmap_to_rgb(resized_heatmap)
-    overlay_image = overlay_heatmap(original_image, resized_heatmap, overlay_alpha)
+    render_config = render_config or HeatmapRenderConfig(alpha=overlay_alpha)
+    heatmap_array = render_heatmap_image(original_image, spatial_map, render_config)
+    overlay_array = render_heatmap_overlay(original_image, spatial_map, render_config)
+    panel_array = render_heatmap_panel(
+        original_image,
+        spatial_map,
+        {
+            "true_label": sample.true_label,
+            "predicted_label": prediction.predicted_label,
+            "target_label": resolved_target_label,
+        },
+        render_config,
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{sample.index:04d}_{resolved_target_label}"
     heatmap_path = output_dir / f"{stem}_heatmap.png"
     overlay_path = output_dir / f"{stem}_overlay.png"
+    panel_path = output_dir / f"{stem}_panel.png"
     metadata_path = output_dir / f"{stem}_metadata.json"
-    heatmap_image.save(heatmap_path)
-    overlay_image.save(overlay_path)
+    Image.fromarray(heatmap_array).save(heatmap_path)
+    Image.fromarray(overlay_array).save(overlay_path)
+    Image.fromarray(panel_array).save(panel_path)
 
     metadata = GradCamMetadata(
         sample_index=sample.index,
@@ -288,8 +287,10 @@ def generate_gradcam(
         spatial_shape=(int(spatial_map.shape[0]), int(spatial_map.shape[1])),
         output_heatmap=str(heatmap_path),
         output_overlay=str(overlay_path),
+        output_panel=str(panel_path),
         output_metadata=str(metadata_path),
         cam_method=cam_method,
+        render_config=render_config.to_dict(),
     )
     metadata_path.write_text(json.dumps(asdict(metadata), indent=2, sort_keys=True), encoding="utf-8")
     return metadata
@@ -305,7 +306,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--target-label", default="predicted", choices=TARGET_LABEL_CHOICES, help="Class to explain.")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, type=Path, help="Directory for heatmap, overlay, and metadata.")
     parser.add_argument("--layer-index", default=-1, type=int, help="Vision block index to hook; -1 means last block.")
-    parser.add_argument("--overlay-alpha", default=0.45, type=float, help="Heatmap opacity over the source image.")
+    parser.add_argument("--colormap", default="viridis", choices=SUPPORTED_COLORMAPS, help="Heatmap colormap.")
+    parser.add_argument("--overlay-alpha", default=0.38, type=float, help="Maximum heatmap opacity over the source image.")
+    parser.add_argument("--clip-low-percentile", default=55.0, type=float, help="Low percentile clipped before normalization.")
+    parser.add_argument("--clip-high-percentile", default=99.5, type=float, help="High percentile clipped before normalization.")
+    parser.add_argument("--smoothing-sigma", default=0.85, type=float, help="Gaussian smoothing sigma applied before upsampling.")
+    parser.add_argument("--heatmap-gamma", default=0.8, type=float, help="Gamma adjustment for normalized heatmap intensity.")
+    parser.add_argument("--legend-width", default=72, type=int, help="Width of the color scale legend in panel output.")
+    parser.add_argument("--border-threshold", default=12, type=int, help="RGB grayscale threshold used to suppress black X-ray borders.")
+    parser.add_argument("--no-border-suppression", action="store_true", help="Disable black-border heatmap attenuation.")
     return parser.parse_args(argv)
 
 
@@ -316,6 +325,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.sample_index < 0 or args.sample_index >= len(samples):
             raise ValueError(f"--sample-index must be between 0 and {len(samples) - 1}.")
         model, processor = load_model_and_processor(args.model_name, args.adapter_dir)
+        render_config = HeatmapRenderConfig(
+            colormap=args.colormap,
+            alpha=args.overlay_alpha,
+            clip_low_percentile=args.clip_low_percentile,
+            clip_high_percentile=args.clip_high_percentile,
+            smoothing_sigma=args.smoothing_sigma,
+            gamma=args.heatmap_gamma,
+            suppress_borders=not args.no_border_suppression,
+            border_threshold=args.border_threshold,
+            legend_width=args.legend_width,
+        )
         metadata = generate_gradcam(
             model,
             processor,
@@ -324,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
             target_label=args.target_label,
             layer_index=args.layer_index,
             overlay_alpha=args.overlay_alpha,
+            render_config=render_config,
         )
     except (ImportError, RuntimeError, FileNotFoundError, ValueError, KeyError) as exc:
         print(f"ERROR: {exc}")
@@ -337,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"hook_layer={metadata.hook_layer_name}")
     print(f"heatmap={metadata.output_heatmap}")
     print(f"overlay={metadata.output_overlay}")
+    print(f"panel={metadata.output_panel}")
     print(f"metadata={metadata.output_metadata}")
     return 0
 

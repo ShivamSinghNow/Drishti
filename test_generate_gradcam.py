@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import types
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
 from PIL import Image
 
+from evaluate_checkpoint import EvalSample, PredictionRecord
 from generate_gradcam import (
     ActivationGradientCapture,
     compute_token_gradcam,
     find_vision_block,
-    heatmap_to_rgb,
-    overlay_heatmap,
-    resize_heatmap,
+    generate_gradcam,
     token_cam_to_spatial_map,
 )
 
@@ -33,6 +35,17 @@ class FakePeftWrapper:
 
     def get_base_model(self):
         return self._base
+
+
+class FakeGradCamModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = types.SimpleNamespace(use_cache=True)
+        self.block = torch.nn.Linear(2, 2, bias=False)
+
+    def forward_hook_score(self) -> torch.Tensor:
+        inputs = torch.ones((4, 2), requires_grad=True)
+        return self.block(inputs).sum()
 
 
 class GradCamTests(unittest.TestCase):
@@ -83,16 +96,40 @@ class GradCamTests(unittest.TestCase):
         self.assertAlmostEqual(float(spatial.max()), 1.0)
         self.assertAlmostEqual(float(spatial.min()), 0.0)
 
-    def test_heatmap_render_helpers_preserve_image_size(self) -> None:
-        heatmap = torch.tensor([[0.0, 1.0], [0.5, 0.25]])
-        resized = resize_heatmap(heatmap, (6, 4))
-        heatmap_image = heatmap_to_rgb(resized)
-        overlay = overlay_heatmap(Image.new("RGB", (6, 4), "white"), resized, alpha=0.4)
+    def test_generate_gradcam_writes_heatmap_overlay_panel_and_metadata(self) -> None:
+        fake_model = FakeGradCamModel()
+        prediction = PredictionRecord(
+            0,
+            "/tmp/xray.png",
+            "active_tb",
+            "active_tb",
+            0.90,
+            {"active_tb": 0.90, "healthy": 0.05, "sick_but_non_tb": 0.05},
+            {"active_tb": -0.10, "healthy": -4.0, "sick_but_non_tb": -3.5},
+        )
 
-        self.assertEqual(resized.shape, (4, 6))
-        self.assertEqual(heatmap_image.size, (6, 4))
-        self.assertEqual(overlay.size, (6, 4))
-        self.assertEqual(np.asarray(overlay).shape, (4, 6, 3))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            image_path = tmp_path / "xray.png"
+            Image.new("RGB", (12, 10), color=(120, 120, 120)).save(image_path)
+            sample = EvalSample(7, [], "active_tb", str(image_path))
+
+            def score_with_hook(_model, _processor, _sample, _target_label):
+                return fake_model.forward_hook_score(), (1, 2, 2)
+
+            with (
+                patch("generate_gradcam.score_sample_batch", return_value=[prediction]),
+                patch("generate_gradcam.find_vision_block", return_value=("visual.blocks.31", fake_model.block)),
+                patch("generate_gradcam.score_target_label_with_grad", side_effect=score_with_hook),
+            ):
+                metadata = generate_gradcam(fake_model, object(), sample, tmp_path / "gradcam")
+
+            self.assertTrue(Path(metadata.output_heatmap).exists())
+            self.assertTrue(Path(metadata.output_overlay).exists())
+            self.assertTrue(Path(metadata.output_panel).exists())
+            self.assertTrue(Path(metadata.output_metadata).exists())
+            self.assertIn("colormap", metadata.render_config)
+            self.assertEqual(np.asarray(Image.open(metadata.output_panel)).shape[2], 3)
 
 
 if __name__ == "__main__":
