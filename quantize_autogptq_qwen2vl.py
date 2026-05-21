@@ -200,6 +200,7 @@ def patch_qwen2vl_gptq_layout(gptq_model: Any) -> None:
 
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     ensure_autogptq_transformers_compat()
+    import torch
     from auto_gptq import BaseQuantizeConfig
     from transformers import AutoProcessor
     from evaluate_checkpoint import load_eval_samples
@@ -225,6 +226,8 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     if not hasattr(model.model.config, "use_cache"):
         model.model.config.use_cache = False
     patch_qwen2vl_gptq_layout(model)
+    if args.force_model_cuda and torch.cuda.is_available():
+        model.model.to("cuda:0")
     model.quantize(calibration_examples, batch_size=args.batch_size)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -275,7 +278,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--desc-act", action="store_true", help="Enable activation-order GPTQ quantization.")
     parser.add_argument("--batch-size", default=1, type=int, help="Calibration batch size.")
     parser.add_argument("--device-map", default="auto", help="Device map passed to the GPTQ model loader.")
+    parser.add_argument("--no-force-model-cuda", dest="force_model_cuda", action="store_false", help="Do not move the full merged model to cuda:0 before quantization.")
     parser.add_argument("--size-limit-gb", default=DEFAULT_SIZE_LIMIT_GB, type=float, help="Acceptance threshold for quantized model size.")
+    parser.set_defaults(force_model_cuda=True)
     return parser.parse_args(argv)
 
 
