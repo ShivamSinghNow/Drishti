@@ -179,6 +179,8 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         trust_remote_code=True,
         device_map=args.device_map,
     )
+    if not hasattr(model.model.config, "use_cache"):
+        model.model.config.use_cache = False
     model.quantize(calibration_examples, batch_size=args.batch_size)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
