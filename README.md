@@ -16,6 +16,10 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `build_dataloader.py`: validates Qwen-VL tokenized train/val DataLoader batches with masked labels.
 - `train_qlora.py`: configures QLoRA training on CUDA or ROCm and supports dry-run plus setup-only validation.
 - `evaluate_checkpoint.py`: scores checkpoint predictions and writes accuracy, F1, AUC, and confusion matrix metrics.
+- `merge_lora_checkpoint.py`: merges the selected run #4 LoRA adapter into the Qwen2-VL base model before INT4 quantization.
+- `quantize_autogptq_qwen2vl.py`: runs Qwen2-VL AutoGPTQ INT4 quantization with stratified TBX11K calibration samples.
+- `evaluate_quantized_checkpoint.py`: evaluates a merged GPTQ model and reports deltas against the run #4 full-precision baseline.
+- `quantization_utils.py`: shared DRI-23 helpers for calibration selection, locked-format checks, model-size reporting, and metric deltas.
 - `generate_gradcam.py`: generates Grad-CAM heatmaps and overlays from the Qwen2-VL vision encoder.
 - `heatmap_rendering.py`: renders Grad-CAM maps as readable overlays and standalone demo panels.
 - `setup_wandb.py`: initializes the `tbx11k-qwen-vl-finetuning` W&B project and logs a setup metric.
@@ -27,6 +31,8 @@ This repository contains setup utilities only. It does not include the TBX11K da
 Use [notebooks/dri18_run3_colab.ipynb](notebooks/dri18_run3_colab.ipynb) for the DRI-18 run #3 workflow. The notebook installs CUDA-compatible dependencies, downloads TBX11K from Kaggle, regenerates JSONL, runs preflight checks, trains in diagnostic segments, evaluates early confusion-matrix gates, and uploads artifacts to Hugging Face.
 
 Use [notebooks/dri19_run4_vision_lora_colab.ipynb](notebooks/dri19_run4_vision_lora_colab.ipynb) for the DRI-19 run #4 vision-LoRA ablation. It reuses the run #3 recipe with seed `42`, adds exact vision-attention LoRA targets, runs a setup-only forward/backward OOM check, and falls back to vision rank `16` / alpha `32` only if rank `32` OOMs.
+
+Use [notebooks/dri23_int4_quantize_colab.ipynb](notebooks/dri23_int4_quantize_colab.ipynb) for DRI-23 INT4 quantization. It installs the Qwen2-VL AutoGPTQ fork, downloads the selected run #4 checkpoint from Hugging Face, merges LoRA into the base model, quantizes with 128 stratified val calibration samples, evaluates the quantized model, checks the `<0.02` macro-F1 drop gate, and uploads GPTQ artifacts.
 
 The Colab path should install the CUDA dependency set:
 
@@ -219,6 +225,53 @@ python generate_gradcam.py \
   --overlay-alpha 0.38 \
   --output-dir outputs/gradcam/run4-checkpoint-4950
 ```
+
+## DRI-23 INT4 Quantization
+
+DRI-23 should run on a CUDA Colab runtime. The selected full-precision checkpoint is:
+
+```text
+ShivSingh123/drishti-qlora-run4-vision-lora-ablation/checkpoints/checkpoint-4950
+```
+
+Merge the run #4 adapter into the base model:
+
+```bash
+python merge_lora_checkpoint.py \
+  --base-model Qwen/Qwen2-VL-7B-Instruct \
+  --adapter-repo-id ShivSingh123/drishti-qlora-run4-vision-lora-ablation \
+  --adapter-repo-path checkpoints/checkpoint-4950 \
+  --output-dir outputs/dri23-run4-merged-fp16
+```
+
+Quantize the merged model:
+
+```bash
+python quantize_autogptq_qwen2vl.py \
+  --merged-model-dir outputs/dri23-run4-merged-fp16 \
+  --data-dir data/processed \
+  --split val \
+  --calibration-samples 128 \
+  --output-dir outputs/dri23-run4-gptq-int4 \
+  --bits 4 \
+  --group-size 128
+```
+
+Evaluate the quantized model against the run #4 baseline:
+
+```bash
+python evaluate_quantized_checkpoint.py \
+  --model-dir outputs/dri23-run4-gptq-int4 \
+  --data-dir data/processed \
+  --split val \
+  --output-dir outputs/eval/dri23-run4-gptq-int4/full-val \
+  --batch-size 3 \
+  --gate run3-full \
+  --generation-smoke \
+  --fail-on-gate-fail
+```
+
+Acceptance requires the quantized model-size report to pass the configured `4.0GB` gate, the generation smoke check to return the locked `Classification: <label>` format, and macro-F1 to drop by no more than `0.02` from the run #4 full-precision baseline.
 
 The script hooks the selected Qwen2-VL vision transformer block, scores the three locked classification responses, backprops from the selected class log-likelihood, and writes a heatmap PNG, readable overlay PNG, demo panel PNG with side legend, and metadata JSON. It uses the last vision block by default, renders with conservative viridis defaults, suppresses black X-ray borders, and falls back to a gradient-activation map if vanilla Grad-CAM is flat.
 

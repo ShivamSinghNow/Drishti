@@ -1,2 +1,3 @@
 # CUDA/Colab dependencies. Colab provides CUDA PyTorch in the GPU runtime.
 -r requirements.txt
+qwen-vl-utils
