@@ -5,6 +5,7 @@ import contextlib
 import importlib
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -278,6 +279,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--desc-act", action="store_true", help="Enable activation-order GPTQ quantization.")
     parser.add_argument("--batch-size", default=1, type=int, help="Calibration batch size.")
     parser.add_argument("--device-map", default="auto", help="Device map passed to the GPTQ model loader.")
+    parser.add_argument("--debug-traceback", action="store_true", help="Print full traceback on script-level failures.")
     parser.add_argument("--no-force-model-cuda", dest="force_model_cuda", action="store_false", help="Do not move the full merged model to cuda:0 before quantization.")
     parser.add_argument("--size-limit-gb", default=DEFAULT_SIZE_LIMIT_GB, type=float, help="Acceptance threshold for quantized model size.")
     parser.set_defaults(force_model_cuda=True)
@@ -289,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         metadata = quantize_model(args)
     except (ImportError, RuntimeError, FileNotFoundError, ValueError, KeyError) as exc:
+        if args.debug_traceback:
+            traceback.print_exc()
         print(f"ERROR: {exc}")
         return 1
 
