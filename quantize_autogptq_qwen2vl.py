@@ -75,6 +75,28 @@ def ensure_autogptq_transformers_compat() -> None:
         Qwen2VLForConditionalGeneration.__init__ = patched_init
         Qwen2VLForConditionalGeneration._drishti_autogptq_init_patched = True
 
+    try:
+        from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLDecoderLayer
+    except ImportError:
+        Qwen2VLDecoderLayer = None
+
+    if Qwen2VLDecoderLayer is not None and not getattr(
+        Qwen2VLDecoderLayer,
+        "_drishti_autogptq_forward_patched",
+        False,
+    ):
+        original_decoder_forward = Qwen2VLDecoderLayer.forward
+
+        def patched_decoder_forward(self, hidden_states, *args, **kwargs):
+            if torch.is_tensor(hidden_states) and hidden_states.dim() == 2:
+                hidden_states = hidden_states.unsqueeze(0)
+            if torch.is_tensor(kwargs.get("hidden_states")) and kwargs["hidden_states"].dim() == 2:
+                kwargs["hidden_states"] = kwargs["hidden_states"].unsqueeze(0)
+            return original_decoder_forward(self, hidden_states, *args, **kwargs)
+
+        Qwen2VLDecoderLayer.forward = patched_decoder_forward
+        Qwen2VLDecoderLayer._drishti_autogptq_forward_patched = True
+
     if hasattr(modeling_utils, "no_init_weights"):
         return
 
