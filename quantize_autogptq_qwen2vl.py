@@ -193,32 +193,43 @@ def patch_qwen2vl_gptq_layout(gptq_model: Any) -> None:
     root_model = gptq_model.model
     existing_layers = module_by_path(root_model, gptq_model.layers_block_name)
     if existing_layers is not None:
-        return
+        layer_prefix = gptq_model.layers_block_name.removesuffix(".layers")
+    else:
+        layer_prefix = None
 
-    layer_type = getattr(gptq_model, "layer_type", "Qwen2VLDecoderLayer")
-    for module_name, module in root_model.named_modules():
-        if not isinstance(module, torch.nn.ModuleList) or len(module) == 0:
-            continue
-        if module[0].__class__.__name__ != layer_type:
-            continue
-        gptq_model.layers_block_name = module_name
-        prefix = module_name.removesuffix(".layers")
-        gptq_model.outside_layer_modules = [
-            f"{prefix}.embed_tokens",
-            f"{prefix}.norm",
-            "visual",
-        ]
-        return
+    if layer_prefix is None:
+        layer_type = getattr(gptq_model, "layer_type", "Qwen2VLDecoderLayer")
+        for module_name, module in root_model.named_modules():
+            if not isinstance(module, torch.nn.ModuleList) or len(module) == 0:
+                continue
+            if module[0].__class__.__name__ != layer_type:
+                continue
+            gptq_model.layers_block_name = module_name
+            layer_prefix = module_name.removesuffix(".layers")
+            break
 
-    sample_names = [
-        name
-        for name, module in root_model.named_modules()
-        if isinstance(module, torch.nn.ModuleList)
-    ][:20]
-    raise ValueError(
-        "Could not locate Qwen2-VL decoder layers for AutoGPTQ. "
-        f"Tried {gptq_model.layers_block_name!r}; found ModuleLists: {sample_names}"
-    )
+    if layer_prefix is None:
+        sample_names = [
+            name
+            for name, module in root_model.named_modules()
+            if isinstance(module, torch.nn.ModuleList)
+        ][:20]
+        raise ValueError(
+            "Could not locate Qwen2-VL decoder layers for AutoGPTQ. "
+            f"Tried {gptq_model.layers_block_name!r}; found ModuleLists: {sample_names}"
+        )
+
+    outside_candidates = [
+        f"{layer_prefix}.embed_tokens",
+        f"{layer_prefix}.norm",
+        f"{layer_prefix}.visual",
+        "visual",
+    ]
+    gptq_model.outside_layer_modules = [
+        module_name
+        for module_name in outside_candidates
+        if module_by_path(root_model, module_name) is not None
+    ]
 
 
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
