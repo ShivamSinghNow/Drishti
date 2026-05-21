@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import sys
 import time
@@ -22,7 +23,52 @@ DEFAULT_DATA_DIR = Path("data/processed")
 DEFAULT_SIZE_LIMIT_GB = 4.0
 
 
+def ensure_autogptq_transformers_compat() -> None:
+    import torch
+    import transformers.modeling_utils as modeling_utils
+
+    if hasattr(modeling_utils, "no_init_weights"):
+        return
+
+    init_function_names = (
+        "uniform_",
+        "normal_",
+        "trunc_normal_",
+        "constant_",
+        "xavier_uniform_",
+        "xavier_normal_",
+        "kaiming_uniform_",
+        "kaiming_normal_",
+        "orthogonal_",
+        "sparse_",
+    )
+
+    @contextlib.contextmanager
+    def no_init_weights(_enable: bool = True):
+        old_init_weights = getattr(modeling_utils, "_init_weights", True)
+        originals = {}
+        if _enable:
+            modeling_utils._init_weights = False
+
+            def _skip_init(*_args, **_kwargs):
+                return None
+
+            for name in init_function_names:
+                if hasattr(torch.nn.init, name):
+                    originals[name] = getattr(torch.nn.init, name)
+                    setattr(torch.nn.init, name, _skip_init)
+        try:
+            yield
+        finally:
+            modeling_utils._init_weights = old_init_weights
+            for name, original in originals.items():
+                setattr(torch.nn.init, name, original)
+
+    modeling_utils.no_init_weights = no_init_weights
+
+
 def load_qwen2vl_gptq_class() -> Any:
+    ensure_autogptq_transformers_compat()
     candidates = (
         ("auto_gptq.modeling.qwen2_vl", "Qwen2VLGPTQForConditionalGeneration"),
         ("auto_gptq.modeling.qwen2vl", "Qwen2VLGPTQForConditionalGeneration"),
@@ -63,6 +109,7 @@ def prepare_calibration_examples(processor: Any, samples: list[Any]) -> list[dic
 
 
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
+    ensure_autogptq_transformers_compat()
     from auto_gptq import BaseQuantizeConfig
     from transformers import AutoProcessor
     from evaluate_checkpoint import load_eval_samples
