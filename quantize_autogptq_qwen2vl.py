@@ -27,6 +27,18 @@ def ensure_autogptq_transformers_compat() -> None:
     import torch
     import transformers.modeling_utils as modeling_utils
 
+    try:
+        import peft.mapping as peft_mapping
+        import peft.peft_model as peft_model
+
+        if not hasattr(peft_model, "PEFT_TYPE_TO_MODEL_MAPPING") and hasattr(
+            peft_mapping,
+            "PEFT_TYPE_TO_MODEL_MAPPING",
+        ):
+            peft_model.PEFT_TYPE_TO_MODEL_MAPPING = peft_mapping.PEFT_TYPE_TO_MODEL_MAPPING
+    except ImportError:
+        pass
+
     if hasattr(modeling_utils, "no_init_weights"):
         return
 
