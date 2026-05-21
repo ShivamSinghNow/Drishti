@@ -232,6 +232,26 @@ def patch_qwen2vl_gptq_layout(gptq_model: Any) -> None:
     ]
 
 
+def move_qwen2vl_visual_modules_to_cuda(root_model: Any) -> list[str]:
+    moved = []
+    seen = set()
+    candidates = [
+        ("visual", module_by_path(root_model, "visual")),
+        ("model.visual", module_by_path(root_model, "model.visual")),
+    ]
+    for module_name, module in root_model.named_modules():
+        if module_name.endswith(".visual") or module_name == "visual":
+            candidates.append((module_name, module))
+
+    for module_name, module in candidates:
+        if module is None or id(module) in seen:
+            continue
+        seen.add(id(module))
+        module.to("cuda:0")
+        moved.append(module_name)
+    return moved
+
+
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     ensure_autogptq_transformers_compat()
     import torch
@@ -262,6 +282,9 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     patch_qwen2vl_gptq_layout(model)
     if args.force_model_cuda and torch.cuda.is_available():
         model.model.to("cuda:0")
+    visual_modules_on_cuda = []
+    if args.force_visual_cuda and torch.cuda.is_available():
+        visual_modules_on_cuda = move_qwen2vl_visual_modules_to_cuda(model.model)
     model.quantize(calibration_examples, batch_size=args.batch_size)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -288,6 +311,9 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         "desc_act": args.desc_act,
         "batch_size": args.batch_size,
         "device_map": args.device_map,
+        "force_model_cuda": args.force_model_cuda,
+        "force_visual_cuda": args.force_visual_cuda,
+        "visual_modules_on_cuda": visual_modules_on_cuda,
         "size_bytes": size_bytes,
         "size_gb": size_gb,
         "size_limit_gb": args.size_limit_gb,
@@ -314,8 +340,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--device-map", default="auto", help="Device map passed to the GPTQ model loader.")
     parser.add_argument("--debug-traceback", action="store_true", help="Print full traceback on script-level failures.")
     parser.add_argument("--no-force-model-cuda", dest="force_model_cuda", action="store_false", help="Do not move the full merged model to cuda:0 before quantization.")
+    parser.add_argument("--no-force-visual-cuda", dest="force_visual_cuda", action="store_false", help="Do not pin Qwen2-VL visual modules to cuda:0 before quantization.")
     parser.add_argument("--size-limit-gb", default=DEFAULT_SIZE_LIMIT_GB, type=float, help="Acceptance threshold for quantized model size.")
     parser.set_defaults(force_model_cuda=True)
+    parser.set_defaults(force_visual_cuda=True)
     return parser.parse_args(argv)
 
 
