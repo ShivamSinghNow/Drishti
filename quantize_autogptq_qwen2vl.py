@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +24,121 @@ DEFAULT_DATA_DIR = Path("data/processed")
 DEFAULT_SIZE_LIMIT_GB = 4.0
 
 
+def ensure_autogptq_transformers_compat() -> None:
+    import torch
+    import transformers.modeling_utils as modeling_utils
+
+    try:
+        import peft.mapping as peft_mapping
+        import peft.peft_model as peft_model
+
+        if not hasattr(peft_model, "PEFT_TYPE_TO_MODEL_MAPPING") and hasattr(
+            peft_mapping,
+            "PEFT_TYPE_TO_MODEL_MAPPING",
+        ):
+            peft_model.PEFT_TYPE_TO_MODEL_MAPPING = peft_mapping.PEFT_TYPE_TO_MODEL_MAPPING
+        elif not hasattr(peft_model, "PEFT_TYPE_TO_MODEL_MAPPING"):
+            peft_model.PEFT_TYPE_TO_MODEL_MAPPING = {}
+    except ImportError:
+        pass
+
+    try:
+        from transformers import Qwen2VLForConditionalGeneration
+    except ImportError:
+        Qwen2VLForConditionalGeneration = None
+
+    if Qwen2VLForConditionalGeneration is not None and not getattr(
+        Qwen2VLForConditionalGeneration,
+        "_drishti_autogptq_init_patched",
+        False,
+    ):
+        original_init = Qwen2VLForConditionalGeneration.__init__
+        stale_hub_kwargs = {
+            "cache_dir",
+            "force_download",
+            "local_files_only",
+            "mirror",
+            "proxies",
+            "resume_download",
+            "revision",
+            "subfolder",
+            "token",
+            "use_auth_token",
+            "_commit_hash",
+        }
+
+        def patched_init(self, *args, **kwargs):
+            for key in stale_hub_kwargs:
+                kwargs.pop(key, None)
+            return original_init(self, *args, **kwargs)
+
+        Qwen2VLForConditionalGeneration.__init__ = patched_init
+        Qwen2VLForConditionalGeneration._drishti_autogptq_init_patched = True
+
+    try:
+        from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLDecoderLayer
+    except ImportError:
+        Qwen2VLDecoderLayer = None
+
+    if Qwen2VLDecoderLayer is not None and not getattr(
+        Qwen2VLDecoderLayer,
+        "_drishti_autogptq_forward_patched",
+        False,
+    ):
+        original_decoder_forward = Qwen2VLDecoderLayer.forward
+
+        def patched_decoder_forward(self, hidden_states, *args, **kwargs):
+            if torch.is_tensor(hidden_states) and hidden_states.dim() == 2:
+                hidden_states = hidden_states.unsqueeze(0)
+            if torch.is_tensor(kwargs.get("hidden_states")) and kwargs["hidden_states"].dim() == 2:
+                kwargs["hidden_states"] = kwargs["hidden_states"].unsqueeze(0)
+            return original_decoder_forward(self, hidden_states, *args, **kwargs)
+
+        Qwen2VLDecoderLayer.forward = patched_decoder_forward
+        Qwen2VLDecoderLayer._drishti_autogptq_forward_patched = True
+
+    if hasattr(modeling_utils, "no_init_weights"):
+        return
+
+    init_function_names = (
+        "uniform_",
+        "normal_",
+        "trunc_normal_",
+        "constant_",
+        "xavier_uniform_",
+        "xavier_normal_",
+        "kaiming_uniform_",
+        "kaiming_normal_",
+        "orthogonal_",
+        "sparse_",
+    )
+
+    @contextlib.contextmanager
+    def no_init_weights(_enable: bool = True):
+        old_init_weights = getattr(modeling_utils, "_init_weights", True)
+        originals = {}
+        if _enable:
+            modeling_utils._init_weights = False
+
+            def _skip_init(*_args, **_kwargs):
+                return None
+
+            for name in init_function_names:
+                if hasattr(torch.nn.init, name):
+                    originals[name] = getattr(torch.nn.init, name)
+                    setattr(torch.nn.init, name, _skip_init)
+        try:
+            yield
+        finally:
+            modeling_utils._init_weights = old_init_weights
+            for name, original in originals.items():
+                setattr(torch.nn.init, name, original)
+
+    modeling_utils.no_init_weights = no_init_weights
+
+
 def load_qwen2vl_gptq_class() -> Any:
+    ensure_autogptq_transformers_compat()
     candidates = (
         ("auto_gptq.modeling.qwen2_vl", "Qwen2VLGPTQForConditionalGeneration"),
         ("auto_gptq.modeling.qwen2vl", "Qwen2VLGPTQForConditionalGeneration"),
@@ -62,7 +178,83 @@ def prepare_calibration_examples(processor: Any, samples: list[Any]) -> list[dic
     return examples
 
 
+def module_by_path(root: Any, path: str) -> Any | None:
+    current = root
+    for part in path.split("."):
+        if not hasattr(current, part):
+            return None
+        current = getattr(current, part)
+    return current
+
+
+def patch_qwen2vl_gptq_layout(gptq_model: Any) -> None:
+    import torch
+
+    root_model = gptq_model.model
+    existing_layers = module_by_path(root_model, gptq_model.layers_block_name)
+    if existing_layers is not None:
+        layer_prefix = gptq_model.layers_block_name.removesuffix(".layers")
+    else:
+        layer_prefix = None
+
+    if layer_prefix is None:
+        layer_type = getattr(gptq_model, "layer_type", "Qwen2VLDecoderLayer")
+        for module_name, module in root_model.named_modules():
+            if not isinstance(module, torch.nn.ModuleList) or len(module) == 0:
+                continue
+            if module[0].__class__.__name__ != layer_type:
+                continue
+            gptq_model.layers_block_name = module_name
+            layer_prefix = module_name.removesuffix(".layers")
+            break
+
+    if layer_prefix is None:
+        sample_names = [
+            name
+            for name, module in root_model.named_modules()
+            if isinstance(module, torch.nn.ModuleList)
+        ][:20]
+        raise ValueError(
+            "Could not locate Qwen2-VL decoder layers for AutoGPTQ. "
+            f"Tried {gptq_model.layers_block_name!r}; found ModuleLists: {sample_names}"
+        )
+
+    outside_candidates = [
+        f"{layer_prefix}.embed_tokens",
+        f"{layer_prefix}.norm",
+        f"{layer_prefix}.visual",
+        "visual",
+    ]
+    gptq_model.outside_layer_modules = [
+        module_name
+        for module_name in outside_candidates
+        if module_by_path(root_model, module_name) is not None
+    ]
+
+
+def move_qwen2vl_visual_modules_to_cuda(root_model: Any) -> list[str]:
+    moved = []
+    seen = set()
+    candidates = [
+        ("visual", module_by_path(root_model, "visual")),
+        ("model.visual", module_by_path(root_model, "model.visual")),
+    ]
+    for module_name, module in root_model.named_modules():
+        if module_name.endswith(".visual") or module_name == "visual":
+            candidates.append((module_name, module))
+
+    for module_name, module in candidates:
+        if module is None or id(module) in seen:
+            continue
+        seen.add(id(module))
+        module.to("cuda:0")
+        moved.append(module_name)
+    return moved
+
+
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
+    ensure_autogptq_transformers_compat()
+    import torch
     from auto_gptq import BaseQuantizeConfig
     from transformers import AutoProcessor
     from evaluate_checkpoint import load_eval_samples
@@ -85,6 +277,14 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         trust_remote_code=True,
         device_map=args.device_map,
     )
+    if not hasattr(model.model.config, "use_cache"):
+        model.model.config.use_cache = False
+    patch_qwen2vl_gptq_layout(model)
+    if args.force_model_cuda and torch.cuda.is_available():
+        model.model.to("cuda:0")
+    visual_modules_on_cuda = []
+    if args.force_visual_cuda and torch.cuda.is_available():
+        visual_modules_on_cuda = move_qwen2vl_visual_modules_to_cuda(model.model)
     model.quantize(calibration_examples, batch_size=args.batch_size)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +311,9 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         "desc_act": args.desc_act,
         "batch_size": args.batch_size,
         "device_map": args.device_map,
+        "force_model_cuda": args.force_model_cuda,
+        "force_visual_cuda": args.force_visual_cuda,
+        "visual_modules_on_cuda": visual_modules_on_cuda,
         "size_bytes": size_bytes,
         "size_gb": size_gb,
         "size_limit_gb": args.size_limit_gb,
@@ -135,7 +338,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--desc-act", action="store_true", help="Enable activation-order GPTQ quantization.")
     parser.add_argument("--batch-size", default=1, type=int, help="Calibration batch size.")
     parser.add_argument("--device-map", default="auto", help="Device map passed to the GPTQ model loader.")
+    parser.add_argument("--debug-traceback", action="store_true", help="Print full traceback on script-level failures.")
+    parser.add_argument("--no-force-model-cuda", dest="force_model_cuda", action="store_false", help="Do not move the full merged model to cuda:0 before quantization.")
+    parser.add_argument("--no-force-visual-cuda", dest="force_visual_cuda", action="store_false", help="Do not pin Qwen2-VL visual modules to cuda:0 before quantization.")
     parser.add_argument("--size-limit-gb", default=DEFAULT_SIZE_LIMIT_GB, type=float, help="Acceptance threshold for quantized model size.")
+    parser.set_defaults(force_model_cuda=True)
+    parser.set_defaults(force_visual_cuda=True)
     return parser.parse_args(argv)
 
 
@@ -144,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         metadata = quantize_model(args)
     except (ImportError, RuntimeError, FileNotFoundError, ValueError, KeyError) as exc:
+        if args.debug_traceback:
+            traceback.print_exc()
         print(f"ERROR: {exc}")
         return 1
 
