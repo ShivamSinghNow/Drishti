@@ -41,6 +41,39 @@ def ensure_autogptq_transformers_compat() -> None:
     except ImportError:
         pass
 
+    try:
+        from transformers import Qwen2VLForConditionalGeneration
+    except ImportError:
+        Qwen2VLForConditionalGeneration = None
+
+    if Qwen2VLForConditionalGeneration is not None and not getattr(
+        Qwen2VLForConditionalGeneration,
+        "_drishti_autogptq_init_patched",
+        False,
+    ):
+        original_init = Qwen2VLForConditionalGeneration.__init__
+        stale_hub_kwargs = {
+            "cache_dir",
+            "force_download",
+            "local_files_only",
+            "mirror",
+            "proxies",
+            "resume_download",
+            "revision",
+            "subfolder",
+            "token",
+            "use_auth_token",
+            "_commit_hash",
+        }
+
+        def patched_init(self, *args, **kwargs):
+            for key in stale_hub_kwargs:
+                kwargs.pop(key, None)
+            return original_init(self, *args, **kwargs)
+
+        Qwen2VLForConditionalGeneration.__init__ = patched_init
+        Qwen2VLForConditionalGeneration._drishti_autogptq_init_patched = True
+
     if hasattr(modeling_utils, "no_init_weights"):
         return
 
