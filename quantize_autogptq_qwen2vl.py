@@ -155,6 +155,49 @@ def prepare_calibration_examples(processor: Any, samples: list[Any]) -> list[dic
     return examples
 
 
+def module_by_path(root: Any, path: str) -> Any | None:
+    current = root
+    for part in path.split("."):
+        if not hasattr(current, part):
+            return None
+        current = getattr(current, part)
+    return current
+
+
+def patch_qwen2vl_gptq_layout(gptq_model: Any) -> None:
+    import torch
+
+    root_model = gptq_model.model
+    existing_layers = module_by_path(root_model, gptq_model.layers_block_name)
+    if existing_layers is not None:
+        return
+
+    layer_type = getattr(gptq_model, "layer_type", "Qwen2VLDecoderLayer")
+    for module_name, module in root_model.named_modules():
+        if not isinstance(module, torch.nn.ModuleList) or len(module) == 0:
+            continue
+        if module[0].__class__.__name__ != layer_type:
+            continue
+        gptq_model.layers_block_name = module_name
+        prefix = module_name.removesuffix(".layers")
+        gptq_model.outside_layer_modules = [
+            f"{prefix}.embed_tokens",
+            f"{prefix}.norm",
+            "visual",
+        ]
+        return
+
+    sample_names = [
+        name
+        for name, module in root_model.named_modules()
+        if isinstance(module, torch.nn.ModuleList)
+    ][:20]
+    raise ValueError(
+        "Could not locate Qwen2-VL decoder layers for AutoGPTQ. "
+        f"Tried {gptq_model.layers_block_name!r}; found ModuleLists: {sample_names}"
+    )
+
+
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     ensure_autogptq_transformers_compat()
     from auto_gptq import BaseQuantizeConfig
@@ -181,6 +224,7 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     )
     if not hasattr(model.model.config, "use_cache"):
         model.model.config.use_cache = False
+    patch_qwen2vl_gptq_layout(model)
     model.quantize(calibration_examples, batch_size=args.batch_size)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
