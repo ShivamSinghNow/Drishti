@@ -36,6 +36,8 @@ def ensure_autogptq_transformers_compat() -> None:
             "PEFT_TYPE_TO_MODEL_MAPPING",
         ):
             peft_model.PEFT_TYPE_TO_MODEL_MAPPING = peft_mapping.PEFT_TYPE_TO_MODEL_MAPPING
+        elif not hasattr(peft_model, "PEFT_TYPE_TO_MODEL_MAPPING"):
+            peft_model.PEFT_TYPE_TO_MODEL_MAPPING = {}
     except ImportError:
         pass
 
