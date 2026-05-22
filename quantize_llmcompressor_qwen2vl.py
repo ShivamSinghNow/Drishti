@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 import traceback
@@ -22,6 +23,31 @@ DEFAULT_OUTPUT_DIR = Path("outputs/dri23-run4-llmcompressor-gptq-int4")
 DEFAULT_IGNORE = ("lm_head", "re:visual.*", "re:model.visual.*")
 
 
+def load_llmcompressor_api() -> tuple[Any, Any]:
+    try:
+        from llmcompressor import oneshot
+    except ImportError:
+        from llmcompressor.transformers import oneshot
+
+    import_paths = (
+        "llmcompressor.modifiers.gptq",
+        "llmcompressor.modifiers.quantization.gptq",
+        "llmcompressor.modifiers.quantization",
+    )
+    import_errors = []
+    for import_path in import_paths:
+        try:
+            module = __import__(import_path, fromlist=["GPTQModifier"])
+            return oneshot, module.GPTQModifier
+        except (ImportError, AttributeError) as exc:
+            import_errors.append(f"{import_path}: {exc}")
+
+    raise ImportError(
+        "Could not import GPTQModifier from any known LLM Compressor path. "
+        + " | ".join(import_errors)
+    )
+
+
 def load_calibration_samples(data_dir: Path, split: str, total: int) -> list[Any]:
     from evaluate_checkpoint import load_eval_samples
 
@@ -41,14 +67,14 @@ def build_calibration_dataset(
         {
             "index": sample.index,
             "true_label": sample.true_label,
-            "messages": qwen_vl_messages_for_sample(sample, include_answer=True),
+            "messages_json": json.dumps(qwen_vl_messages_for_sample(sample, include_answer=True)),
         }
         for sample in samples
     ]
     dataset = Dataset.from_list(rows)
 
     def preprocess_and_tokenize(example: dict[str, Any]) -> dict[str, Any]:
-        messages = example["messages"]
+        messages = json.loads(example["messages_json"])
         text = processor.apply_chat_template(
             messages,
             tokenize=False,
@@ -100,18 +126,20 @@ def load_model_and_processor(model_dir: Path) -> tuple[Any, Any]:
 
 
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
-    from llmcompressor import oneshot
-    from llmcompressor.modifiers.gptq import GPTQModifier
+    oneshot, GPTQModifier = load_llmcompressor_api()
 
     started_at = time.time()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"Loading merged model from {args.merged_model_dir}...", flush=True)
     model, processor = load_model_and_processor(args.merged_model_dir)
+    print("Loading calibration samples...", flush=True)
     calibration_samples = load_calibration_samples(
         args.data_dir,
         args.split,
         args.calibration_samples,
     )
+    print(f"Building calibration dataset with {len(calibration_samples)} samples...", flush=True)
     calibration_dataset = build_calibration_dataset(
         calibration_samples,
         processor,
@@ -129,6 +157,11 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         )
     ]
 
+    print(
+        f"Running LLM Compressor oneshot GPTQ: scheme={args.scheme}, "
+        f"targets={args.targets}, ignore={list(args.ignore)}...",
+        flush=True,
+    )
     oneshot(
         model=model,
         tokenizer=str(args.merged_model_dir),
@@ -141,6 +174,7 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         sequential_targets=[args.sequential_target],
     )
 
+    print(f"Saving compressed model to {args.output_dir}...", flush=True)
     model.save_pretrained(
         args.output_dir,
         save_compressed=True,

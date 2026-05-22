@@ -65,8 +65,10 @@ class CheckpointEvaluationTests(unittest.TestCase):
         messages = candidate_messages(sample, "sick_but_non_tb")
 
         self.assertEqual(messages[0], payload["messages"][0])
-        self.assertIn("Classification: sick_but_non_tb", messages[1]["content"])
-        self.assertEqual(messages[1]["content"], "Classification: sick_but_non_tb")
+        self.assertEqual(
+            messages[1]["content"],
+            [{"type": "text", "text": "Classification: sick_but_non_tb"}],
+        )
 
     def test_softmax_scores_and_prediction_selection(self) -> None:
         probabilities = dict(zip(CLASS_LABELS, softmax_scores([2.0, 1.0, 0.0]), strict=True))

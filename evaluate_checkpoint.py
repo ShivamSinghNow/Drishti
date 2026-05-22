@@ -140,7 +140,15 @@ def candidate_messages(sample: EvalSample, candidate_label: str) -> list[dict[st
         raise ValueError(f"Unsupported candidate label: {candidate_label}")
     return [
         copy.deepcopy(sample.messages[0]),
-        {"role": "assistant", "content": assistant_response(candidate_label)},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": assistant_response(candidate_label),
+                }
+            ],
+        },
     ]
 
 
@@ -204,7 +212,7 @@ def score_sample_batch(
         add_generation_prompt=False,
         return_dict=True,
         return_tensors="pt",
-        processor_kwargs={"padding": True},
+        padding=True,
     )
     prompt_batch = processor.apply_chat_template(
         prompt_conversations,
@@ -212,7 +220,7 @@ def score_sample_batch(
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
-        processor_kwargs={"padding": True},
+        padding=True,
     )
     padding_side = getattr(getattr(processor, "tokenizer", None), "padding_side", "left")
     labels = mask_prompt_labels(

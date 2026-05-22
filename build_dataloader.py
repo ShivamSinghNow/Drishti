@@ -122,7 +122,7 @@ class QwenVlDataCollator:
             add_generation_prompt=False,
             return_dict=True,
             return_tensors="pt",
-            processor_kwargs={"padding": True},
+            padding=True,
         )
         prompt_batch = self.processor.apply_chat_template(
             prompt_conversations,
@@ -130,7 +130,7 @@ class QwenVlDataCollator:
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
-            processor_kwargs={"padding": True},
+            padding=True,
         )
         prompt_lengths = prompt_batch["attention_mask"].sum(dim=1)
         batch["labels"] = mask_prompt_labels(
