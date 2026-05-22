@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 import traceback
@@ -66,14 +67,14 @@ def build_calibration_dataset(
         {
             "index": sample.index,
             "true_label": sample.true_label,
-            "messages": qwen_vl_messages_for_sample(sample, include_answer=True),
+            "messages_json": json.dumps(qwen_vl_messages_for_sample(sample, include_answer=True)),
         }
         for sample in samples
     ]
     dataset = Dataset.from_list(rows)
 
     def preprocess_and_tokenize(example: dict[str, Any]) -> dict[str, Any]:
-        messages = example["messages"]
+        messages = json.loads(example["messages_json"])
         text = processor.apply_chat_template(
             messages,
             tokenize=False,
