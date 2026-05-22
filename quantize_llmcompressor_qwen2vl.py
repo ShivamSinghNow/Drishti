@@ -22,6 +22,31 @@ DEFAULT_OUTPUT_DIR = Path("outputs/dri23-run4-llmcompressor-gptq-int4")
 DEFAULT_IGNORE = ("lm_head", "re:visual.*", "re:model.visual.*")
 
 
+def load_llmcompressor_api() -> tuple[Any, Any]:
+    try:
+        from llmcompressor import oneshot
+    except ImportError:
+        from llmcompressor.transformers import oneshot
+
+    import_paths = (
+        "llmcompressor.modifiers.gptq",
+        "llmcompressor.modifiers.quantization.gptq",
+        "llmcompressor.modifiers.quantization",
+    )
+    import_errors = []
+    for import_path in import_paths:
+        try:
+            module = __import__(import_path, fromlist=["GPTQModifier"])
+            return oneshot, module.GPTQModifier
+        except (ImportError, AttributeError) as exc:
+            import_errors.append(f"{import_path}: {exc}")
+
+    raise ImportError(
+        "Could not import GPTQModifier from any known LLM Compressor path. "
+        + " | ".join(import_errors)
+    )
+
+
 def load_calibration_samples(data_dir: Path, split: str, total: int) -> list[Any]:
     from evaluate_checkpoint import load_eval_samples
 
@@ -100,8 +125,7 @@ def load_model_and_processor(model_dir: Path) -> tuple[Any, Any]:
 
 
 def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
-    from llmcompressor import oneshot
-    from llmcompressor.modifiers.gptq import GPTQModifier
+    oneshot, GPTQModifier = load_llmcompressor_api()
 
     started_at = time.time()
     args.output_dir.mkdir(parents=True, exist_ok=True)
