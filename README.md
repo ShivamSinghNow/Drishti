@@ -19,6 +19,8 @@ This repository contains setup utilities only. It does not include the TBX11K da
 - `merge_lora_checkpoint.py`: merges the selected run #4 LoRA adapter into the Qwen2-VL base model before INT4 quantization.
 - `quantize_autogptq_qwen2vl.py`: runs Qwen2-VL AutoGPTQ INT4 quantization with stratified TBX11K calibration samples.
 - `evaluate_quantized_checkpoint.py`: evaluates a merged GPTQ model and reports deltas against the run #4 full-precision baseline.
+- `export_gguf_llamacpp.py`: exports the selected run #4 checkpoint into llama.cpp text GGUF plus Qwen2-VL mmproj artifacts.
+- `verify_llamacpp_offline.py`: runs the DRI-25 local offline llama.cpp proof and saves latency, tokens/sec, sample output, and model-card notes.
 - `quantization_utils.py`: shared DRI-23 helpers for calibration selection, locked-format checks, model-size reporting, and metric deltas.
 - `generate_gradcam.py`: generates Grad-CAM heatmaps and overlays from the Qwen2-VL vision encoder.
 - `heatmap_rendering.py`: renders Grad-CAM maps as readable overlays and standalone demo panels.
@@ -272,6 +274,47 @@ python evaluate_quantized_checkpoint.py \
 ```
 
 Acceptance requires the quantized model-size report to pass the configured `4.0GB` gate, the generation smoke check to return the locked `Classification: <label>` format, and macro-F1 to drop by no more than `0.02` from the run #4 full-precision baseline.
+
+## DRI-24 GGUF Export
+
+Use [notebooks/dri24_gguf_export_colab.ipynb](notebooks/dri24_gguf_export_colab.ipynb) or the CLI to produce llama.cpp artifacts:
+
+```bash
+python export_gguf_llamacpp.py \
+  --source quantized \
+  --output-dir outputs/dri24-gguf \
+  --output-prefix drishti-qwen2vl-run4
+```
+
+This writes a deployable text GGUF, a separate Qwen2-VL `mmproj` GGUF, and `outputs/dri24-gguf/gguf_export_report.json`.
+
+## DRI-25 Offline llama.cpp Proof
+
+Run [notebooks/dri25_offline_llamacpp_validation.ipynb](notebooks/dri25_offline_llamacpp_validation.ipynb) locally on the laptop. Stage the GGUF, `mmproj`, `llama-mtmd-cli`, and a sample X-ray while online, then turn off Wi-Fi / enable airplane mode for the acceptance cell.
+
+The direct CLI form is:
+
+```bash
+python verify_llamacpp_offline.py \
+  --model outputs/dri24-gguf/drishti-qwen2vl-run4-q4_k_m.gguf \
+  --mmproj outputs/dri24-gguf/mmproj-drishti-qwen2vl-run4-f16.gguf \
+  --image outputs/dri25-offline-llamacpp/sample_xray.png \
+  --llama-cpp-dir external/llama.cpp \
+  --require-offline \
+  --cpu-only \
+  --latency-threshold-seconds 10 \
+  --fail-on-gate-fail
+```
+
+The verifier sets offline environment flags, checks that a network socket is unreachable when `--require-offline` is passed, runs `llama-mtmd-cli` with local files only, and saves:
+
+- `offline_llamacpp_report.json`
+- `sample_output.txt`
+- `llamacpp_stdout.txt`
+- `llamacpp_stderr.txt`
+- `model_card_metrics.md`
+
+Acceptance passes when the command exits cleanly, returns `Classification: <label>`, records tokens/sec from llama.cpp output, and finishes within the configured CPU latency gate.
 
 The script hooks the selected Qwen2-VL vision transformer block, scores the three locked classification responses, backprops from the selected class log-likelihood, and writes a heatmap PNG, readable overlay PNG, demo panel PNG with side legend, and metadata JSON. It uses the last vision block by default, renders with conservative viridis defaults, suppresses black X-ray borders, and falls back to a gradient-activation map if vanilla Grad-CAM is flat.
 
