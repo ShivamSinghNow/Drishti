@@ -140,7 +140,15 @@ def candidate_messages(sample: EvalSample, candidate_label: str) -> list[dict[st
         raise ValueError(f"Unsupported candidate label: {candidate_label}")
     return [
         copy.deepcopy(sample.messages[0]),
-        {"role": "assistant", "content": assistant_response(candidate_label)},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": assistant_response(candidate_label),
+                }
+            ],
+        },
     ]
 
 
