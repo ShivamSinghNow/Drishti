@@ -106,12 +106,15 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
     started_at = time.time()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"Loading merged model from {args.merged_model_dir}...", flush=True)
     model, processor = load_model_and_processor(args.merged_model_dir)
+    print("Loading calibration samples...", flush=True)
     calibration_samples = load_calibration_samples(
         args.data_dir,
         args.split,
         args.calibration_samples,
     )
+    print(f"Building calibration dataset with {len(calibration_samples)} samples...", flush=True)
     calibration_dataset = build_calibration_dataset(
         calibration_samples,
         processor,
@@ -129,6 +132,11 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         )
     ]
 
+    print(
+        f"Running LLM Compressor oneshot GPTQ: scheme={args.scheme}, "
+        f"targets={args.targets}, ignore={list(args.ignore)}...",
+        flush=True,
+    )
     oneshot(
         model=model,
         tokenizer=str(args.merged_model_dir),
@@ -141,6 +149,7 @@ def quantize_model(args: argparse.Namespace) -> dict[str, Any]:
         sequential_targets=[args.sequential_target],
     )
 
+    print(f"Saving compressed model to {args.output_dir}...", flush=True)
     model.save_pretrained(
         args.output_dir,
         save_compressed=True,
