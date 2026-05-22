@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -21,20 +23,71 @@ DEFAULT_MODEL_DIR = Path("outputs/dri23-run4-gptq-int4")
 DEFAULT_EVAL_OUTPUT_DIR = Path("outputs/eval/dri23-run4-gptq-int4")
 
 
-def load_quantized_model_and_processor(model_dir: Path, device_map: str = "auto") -> tuple[Any, Any]:
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+def is_llmcompressor_checkpoint(model_dir: Path) -> bool:
+    metadata_path = model_dir / "quantization_metadata.json"
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            metadata = {}
+        if metadata.get("quantization_backend") == "llmcompressor":
+            return True
 
-    processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
+    config_path = model_dir / "config.json"
+    if not config_path.exists():
+        return False
     try:
-        model_class = load_qwen2vl_gptq_class()
-        model = model_class.from_quantized(str(model_dir), trust_remote_code=True, device_map=device_map)
-    except (ImportError, AttributeError, RuntimeError, TypeError):
-        model = AutoModelForImageTextToText.from_pretrained(
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    quantization_config = config.get("quantization_config") or {}
+    return quantization_config.get("quant_method") == "compressed-tensors"
+
+
+def load_transformers_quantized_model(model_dir: Path, device_map: str) -> Any:
+    try:
+        import llmcompressor  # noqa: F401 - registers compressed-tensors helpers when available.
+    except ImportError:
+        pass
+
+    from transformers import AutoModelForImageTextToText, Qwen2VLForConditionalGeneration
+
+    load_kwargs = {
+        "device_map": device_map,
+        "trust_remote_code": True,
+    }
+    try:
+        return Qwen2VLForConditionalGeneration.from_pretrained(
+            model_dir,
+            dtype="auto",
+            **load_kwargs,
+        )
+    except TypeError:
+        return Qwen2VLForConditionalGeneration.from_pretrained(
             model_dir,
             torch_dtype="auto",
-            device_map=device_map,
-            trust_remote_code=True,
+            **load_kwargs,
         )
+    except (ValueError, RuntimeError, ImportError, OSError):
+        return AutoModelForImageTextToText.from_pretrained(
+            model_dir,
+            torch_dtype="auto",
+            **load_kwargs,
+        )
+
+
+def load_quantized_model_and_processor(model_dir: Path, device_map: str = "auto") -> tuple[Any, Any]:
+    from transformers import AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
+    if is_llmcompressor_checkpoint(model_dir):
+        model = load_transformers_quantized_model(model_dir, device_map)
+    else:
+        try:
+            model_class = load_qwen2vl_gptq_class()
+            model = model_class.from_quantized(str(model_dir), trust_remote_code=True, device_map=device_map)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            model = load_transformers_quantized_model(model_dir, device_map)
     model.eval()
     return model, processor
 
@@ -75,6 +128,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-macro-f1-drop", default=0.02, type=float, help="Maximum allowed macro-F1 drop vs run #4 full-precision baseline.")
     parser.add_argument("--generation-smoke", action="store_true", help="Generate one response and verify the locked Classification format.")
     parser.add_argument("--device-map", default="auto", help="Device map passed to the model loader.")
+    parser.add_argument("--debug-traceback", action="store_true", help="Print full traceback on evaluation loader errors.")
     return parser.parse_args(argv)
 
 
@@ -126,8 +180,10 @@ def main(argv: list[str] | None = None) -> int:
         if gate_result is not None:
             metrics["gate"] = gate_result
         metrics_path, predictions_path = write_outputs(args.output_dir, metrics, predictions)
-    except (ImportError, RuntimeError, FileNotFoundError, ValueError, KeyError) as exc:
+    except (ImportError, RuntimeError, FileNotFoundError, ValueError, KeyError, OSError) as exc:
         print(f"ERROR: {exc}")
+        if args.debug_traceback:
+            traceback.print_exc()
         return 1
 
     print(f"Evaluated {metrics['total_samples']} samples.")
