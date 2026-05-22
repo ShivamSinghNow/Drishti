@@ -212,7 +212,7 @@ def score_sample_batch(
         add_generation_prompt=False,
         return_dict=True,
         return_tensors="pt",
-        processor_kwargs={"padding": True},
+        padding=True,
     )
     prompt_batch = processor.apply_chat_template(
         prompt_conversations,
@@ -220,7 +220,7 @@ def score_sample_batch(
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
-        processor_kwargs={"padding": True},
+        padding=True,
     )
     padding_side = getattr(getattr(processor, "tokenizer", None), "padding_side", "left")
     labels = mask_prompt_labels(
