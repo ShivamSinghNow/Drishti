@@ -4,6 +4,7 @@ language:
 library_name: transformers
 pipeline_tag: image-text-to-text
 base_model: Qwen/Qwen2-VL-7B-Instruct
+license: apache-2.0
 tags:
   - medical-imaging
   - chest-xray
@@ -179,6 +180,14 @@ Two compact deployment formats are tracked:
    - Text model quantized to `Q4_K_M`
    - Offline validation harness: `verify_llamacpp_offline.py`
 
+Public GGUF download files:
+
+| File | Purpose | Size |
+| --- | --- | ---: |
+| `drishti-qwen2vl-run4-quantized-q4_k_m.gguf` | Main text model, Q4_K_M | 4.36 GiB |
+| `mmproj-drishti-qwen2vl-run4-quantized-f16.gguf` | Qwen2-VL multimodal projector | 1.26 GiB |
+| `drishti-qwen2vl-run4-quantized-f16.gguf` | Intermediate f16 text GGUF, retained for reproducibility | 14.19 GiB |
+
 The GGUF artifact may display a different parameter count than the compressed-tensors INT4 checkpoint because GGUF metadata reports logical architecture parameters, while some Hugging Face quantized displays count packed/compressed tensor storage. Quantization changes storage precision and file size; it does not change the model architecture.
 
 ## Offline llama.cpp Proof
@@ -187,8 +196,8 @@ DRI-25 adds a local proof harness for airplane-mode inference:
 
 ```bash
 python verify_llamacpp_offline.py \
-  --model outputs/dri24-gguf/drishti-qwen2vl-run4-q4_k_m.gguf \
-  --mmproj outputs/dri24-gguf/mmproj-drishti-qwen2vl-run4-f16.gguf \
+  --model outputs/dri24-gguf/drishti-qwen2vl-run4-quantized-q4_k_m.gguf \
+  --mmproj outputs/dri24-gguf/mmproj-drishti-qwen2vl-run4-quantized-f16.gguf \
   --image outputs/dri25-offline-llamacpp/sample_xray.png \
   --llama-cpp-dir external/llama.cpp \
   --require-offline \
