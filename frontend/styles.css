@@ -1572,27 +1572,30 @@ section[id] {
   object-fit: contain;
 }
 
-.stack-icon-qwen {
+.stack-icon-qwen,
+.stack-icon-dataset,
+.stack-icon-gradcam {
   padding: 0;
   overflow: hidden;
   border: none;
   background: transparent;
 }
 
-.stack-icon-qwen img {
+.stack-icon-qwen img,
+.stack-icon-dataset img,
+.stack-icon-gradcam img {
   width: 100%;
   height: 100%;
   border-radius: inherit;
+  object-fit: cover;
 }
 
 .stack-icon-dataset {
   color: #2563eb;
-  background: linear-gradient(145deg, rgba(37, 99, 235, 0.14), rgba(59, 130, 246, 0.08));
 }
 
 .stack-icon-gradcam {
   color: #c2410c;
-  background: linear-gradient(145deg, rgba(234, 88, 12, 0.16), rgba(251, 146, 60, 0.1));
 }
 
 .stack-icon-vercel {
