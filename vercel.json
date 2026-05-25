@@ -1,0 +1,11 @@
+{
+  "outputDirectory": "frontend",
+  "installCommand": "",
+  "buildCommand": "",
+  "framework": null,
+  "functions": {
+    "api/analyze.js": {
+      "maxDuration": 120
+    }
+  }
+}

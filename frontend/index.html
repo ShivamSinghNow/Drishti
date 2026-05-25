@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Drishti is a TBX11K chest X-ray screening research model with a live web demo and offline GGUF Q4_K_M export on Hugging Face." />
+  <title>Drishti - Offline TB Detection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..700,30..100;1,9..144,300..700,30..100&family=Inter+Tight:wght@300..700&family=JetBrains+Mono:wght@300..600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <header class="site-nav" data-nav>
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="Drishti home">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 28 28" role="img">
+            <circle cx="14" cy="14" r="13"></circle>
+            <circle class="mark-fill" cx="14" cy="14" r="5.5"></circle>
+            <circle class="mark-cutout" cx="14" cy="14" r="1.8"></circle>
+            <path d="M14 1v3M14 24v3M1 14h3M24 14h3"></path>
+          </svg>
+        </span>
+        <span>Drishti</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#who">Who</a>
+        <a href="#how">How it works</a>
+        <a href="#demo">Demo</a>
+        <a href="#results">Results</a>
+        <a href="#install">Install</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button class="icon-button" type="button" data-theme-toggle aria-label="Toggle dark mode">
+          <svg class="moon-icon" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M15.8 12.4A6.7 6.7 0 0 1 7.6 4.2a6.8 6.8 0 1 0 8.2 8.2Z"></path>
+          </svg>
+          <svg class="sun-icon" viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="3.2"></circle>
+            <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.9 3.9l1.4 1.4M14.7 14.7l1.4 1.4M3.9 16.1l1.4-1.4M14.7 5.3l1.4-1.4"></path>
+          </svg>
+        </button>
+        <a class="btn btn-primary nav-cta" href="#demo">Try demo</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-media" aria-hidden="true">
+        <img src="assets/xray-sample.png" alt="" />
+      </div>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <div class="pill pill-coral"><span class="pulse-dot"></span> open source &middot; runs offline &middot; model research</div>
+          <h1 id="hero-title" class="display hero-title">
+            Tuberculosis detection that runs <em>offline</em> on a phone.
+          </h1>
+          <p class="lead">
+            Drishti is an open vision-language model experiment for chest X-rays in places where doctors and internet access are scarce.
+          </p>
+          <div class="hero-buttons" aria-label="Primary actions">
+            <a class="btn btn-primary" href="#demo">
+              Try the demo
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"></path></svg>
+            </a>
+            <a class="btn btn-outline" href="https://github.com/ShivamSinghNow/Drishti">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.4-1.1-1-1.4-1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.7-1.4-2.2-.2-4.6-1.1-4.6-4.9 0-1.1.4-2 1-2.7-.1-.2-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.3 9.3 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.5.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.4 4.7-4.6 4.9.4.3.7.9.7 1.8V21c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"></path></svg>
+              View on GitHub
+            </a>
+            <a class="btn btn-outline" href="https://huggingface.co/ShivSingh123/drishti-qwen2vl-run4-gguf">
+              GGUF model (run4)
+            </a>
+          </div>
+          <dl class="hero-stats" aria-label="Project stats">
+            <div><dt>Live demo</dt><dd data-model-hero-live>GPU-hosted · run4 LoRA</dd></div>
+            <div><dt>Val accuracy</dt><dd data-model-hero-accuracy>98.72%</dd></div>
+            <div><dt>Offline GGUF</dt><dd data-model-hero-gguf>Q4_K_M · 4.68 GB</dd></div>
+          </dl>
+        </div>
+
+        <div class="hero-phone-wrap" aria-label="Drishti Android result preview">
+          <div class="hero-callout callout-right">Grad-CAM heatmap</div>
+          <div class="hero-callout callout-left">Airplane mode</div>
+          <article class="phone phone-tilt phone-glow">
+            <div class="phone-bezel">
+              <div class="phone-frame">
+                <div class="status-bar">
+                  <span>9:41</span>
+                  <span class="status-icons" aria-hidden="true">
+                    <svg viewBox="0 0 12 12"><path d="M11 7 7 5V2.5a1 1 0 1 0-2 0V5L1 7v1l4-1v2.5L3.5 10v.5L6 10l2.5.5V10L7 9V7l4 1V7Z"></path></svg>
+                    <svg viewBox="0 0 18 10"><rect x="1" y="3" width="2" height="5" rx=".5"></rect><rect x="5" y="2" width="2" height="6" rx=".5"></rect><rect x="9" y="1" width="2" height="7" rx=".5"></rect><rect x="13" y="1" width="3" height="7" rx=".5"></rect></svg>
+                    <svg viewBox="0 0 24 12"><rect x="1" y="2" width="19" height="8" rx="2"></rect><rect x="21" y="5" width="2" height="2" rx=".6"></rect><rect x="3" y="4" width="13" height="4" rx="1"></rect></svg>
+                  </span>
+                </div>
+                <div class="phone-screen">
+                  <div class="result-screen">
+                    <div class="screen-topline">
+                      <span class="mini-brand"><span class="mini-mark"></span>Drishti</span>
+                      <span class="mono">1.89s</span>
+                    </div>
+                    <figure class="xray-card">
+                      <img src="assets/xray-heatmap.png" alt="Chest X-ray heatmap preview" />
+                      <figcaption>grad-cam</figcaption>
+                    </figure>
+                    <div class="classification-card">
+                      <p>classification</p>
+                      <strong>TB-positive</strong>
+                      <span><b>87.4%</b> confidence</span>
+                    </div>
+                    <div class="two-up">
+                      <div><span>region</span><strong>upper-L lobe</strong></div>
+                      <div><span>cavitation</span><strong>mild</strong></div>
+                    </div>
+                    <div class="recommendation">
+                      <span>recommended</span>
+                      <p>Refer to specialist within <b>7 days</b>. Sputum smear advised.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="problem band" aria-labelledby="problem-title">
+      <div class="wrap split" data-reveal>
+        <div>
+          <p class="eyebrow">02 / the problem</p>
+          <h2 id="problem-title" class="section-title">Where existing AI does not reach.</h2>
+          <p>
+            Most medical AI requires a cloud connection. In rural clinics, neither the radiologist nor the network is reliably present.
+          </p>
+        </div>
+        <div class="stat-stack">
+          <article class="stat-row">
+            <strong>600M+</strong>
+            <span>people in India live in areas with limited doctor access</span>
+          </article>
+          <article class="stat-row stat-coral">
+            <strong>#1</strong>
+            <span>TB remains one of India's most urgent infectious disease burdens</span>
+          </article>
+          <article class="stat-row">
+            <strong>0 KB</strong>
+            <span>network traffic needed for an on-device inference path</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="who" class="who-section" aria-labelledby="who-title">
+      <div class="wrap">
+        <div class="section-heading" data-reveal>
+          <p class="eyebrow">03 / who it is for</p>
+          <h2 id="who-title" class="section-title">A second set of eyes for field screening.</h2>
+        </div>
+        <div class="audience-grid" data-reveal>
+          <article>
+            <span class="audience-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21v-5a6 6 0 0 1 12 0v5M9 8a3 3 0 1 0 6 0 3 3 0 0 0-6 0ZM4 21h16"></path></svg>
+            </span>
+            <h3>Community health workers</h3>
+            <p>Triaging chest X-rays in outreach settings before specialist review is available.</p>
+          </article>
+          <article>
+            <span class="audience-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V7l8-4 8 4v14M9 21v-7h6v7M8 10h.01M12 10h.01M16 10h.01"></path></svg>
+            </span>
+            <h3>Primary clinics</h3>
+            <p>Running first-pass analysis on commodity Android hardware, even without a stable connection.</p>
+          </article>
+          <article>
+            <span class="audience-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M5 5h14M7 5l-3 7h6L7 5ZM17 5l-3 7h6l-3-7ZM4 21h16"></path></svg>
+            </span>
+            <h3>Research teams</h3>
+            <p>Experimenting with quantized vision-language models and interpretable TB screening workflows.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="how" class="how-section" aria-labelledby="how-title">
+      <div class="wrap">
+        <div data-reveal>
+          <p class="eyebrow">04 / how it works</p>
+          <h2 id="how-title" class="section-title">From labeled dataset to phone in a clinic.</h2>
+        </div>
+        <div class="pipeline" data-reveal>
+          <article>
+            <span>01</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"></ellipse><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"></path></svg>
+            <h3>Data</h3>
+            <p class="mono">TBX11K dataset</p>
+            <p>Chest X-ray annotations are split, validated, and formatted into Qwen-VL style conversations.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"></rect><rect x="10" y="10" width="4" height="4"></rect><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"></path></svg>
+            <h3>Train</h3>
+            <p class="mono">Qwen2-VL + QLoRA</p>
+            <p>Low-rank adapters target the model efficiently while keeping the experiment reproducible.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v6M12 16v6M2 12h6M16 12h6M5 5l4 4M15 15l4 4M19 5l-4 4M5 19l4-4"></path></svg>
+            <h3>Optimize</h3>
+            <p class="mono">Vision-LoRA ablation</p>
+            <p>Diagnostic gates catch class collapse before moving toward a smaller on-device runtime.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"></rect><path d="M10 18h4"></path></svg>
+            <h3>Deploy</h3>
+            <p class="mono">Android path</p>
+            <p>The design centers the phone because the useful version runs where bandwidth does not.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo" class="demo-section" aria-labelledby="demo-title">
+      <div class="wrap">
+        <div class="demo-heading" data-reveal>
+          <div>
+            <p class="eyebrow">05 / live demo</p>
+            <h2 id="demo-title" class="section-title">Watch the inference flow.</h2>
+          </div>
+          <p>Upload a chest X-ray to run the live run4 classifier (<span data-model-modal-gpu>GPU-hosted</span>, <span data-model-modal-quant>4-bit NF4 LoRA</span>). The same checkpoint is exported as <a href="https://huggingface.co/ShivSingh123/drishti-qwen2vl-run4-gguf" data-model-gguf-link>GGUF Q4_K_M</a> for offline llama.cpp use. <span data-model-cold-start></span></p>
+        </div>
+
+        <p class="demo-error" data-demo-error hidden></p>
+
+        <div class="demo-panel" data-demo data-stage="idle" data-reveal>
+          <div class="demo-phone-column">
+            <article class="phone demo-phone">
+              <div class="phone-bezel">
+                <div class="phone-frame">
+                  <div class="status-bar">
+                    <span>9:41</span>
+                    <span class="status-icons" aria-hidden="true">
+                      <svg viewBox="0 0 12 12"><path d="M11 7 7 5V2.5a1 1 0 1 0-2 0V5L1 7v1l4-1v2.5L3.5 10v.5L6 10l2.5.5V10L7 9V7l4 1V7Z"></path></svg>
+                      <svg viewBox="0 0 18 10"><rect x="1" y="3" width="2" height="5" rx=".5"></rect><rect x="5" y="2" width="2" height="6" rx=".5"></rect><rect x="9" y="1" width="2" height="7" rx=".5"></rect><rect x="13" y="1" width="3" height="7" rx=".5"></rect></svg>
+                      <svg viewBox="0 0 24 12"><rect x="1" y="2" width="19" height="8" rx="2"></rect><rect x="21" y="5" width="2" height="2" rx=".6"></rect><rect x="3" y="4" width="13" height="4" rx="1"></rect></svg>
+                    </span>
+                  </div>
+                  <div class="phone-screen">
+                    <div class="phone-stage phone-stage-idle">
+                      <div class="screen-topline">
+                        <span class="mini-brand"><span class="mini-mark"></span>Drishti</span>
+                        <span class="live-chip"><i></i>live</span>
+                      </div>
+                      <div class="phone-title">
+                        <h3>New scan</h3>
+                        <p>Capture or upload a chest X-ray. Inference runs on the demo API.</p>
+                      </div>
+                      <button class="upload-zone" type="button" data-upload-zone>
+                        <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="9" width="26" height="22" rx="3"></rect><circle cx="15" cy="17" r="2.5"></circle><path d="M7 28l8-8 6 6 4-4 8 8"></path></svg>
+                        <span><b>Tap to add X-ray</b><small>PNG / JPG</small></span>
+                      </button>
+                      <input type="file" accept="image/png,image/jpeg,image/webp" hidden data-file-input />
+                      <button class="phone-primary" type="button" data-run-demo data-use-sample>Use sample</button>
+                    </div>
+
+                    <div class="phone-stage phone-stage-analyzing">
+                      <div class="screen-topline">
+                        <span class="mini-brand"><span class="mini-mark"></span>Drishti</span>
+                        <span class="live-chip"><i></i>live</span>
+                      </div>
+                      <div class="phone-title compact"><h3>Analyzing...</h3></div>
+                      <figure class="scan-frame">
+                        <img src="assets/xray-sample.png" alt="Chest X-ray being analyzed" data-scan-image />
+                        <span class="scan-line"></span>
+                        <figcaption>forward pass</figcaption>
+                      </figure>
+                      <div class="phone-log">
+                        <div>preprocess <span>done</span></div>
+                        <div>vision encoder <span>done</span></div>
+                        <div>language head <span data-phone-head>...</span></div>
+                        <div class="muted">grad-cam <span>pending</span></div>
+                      </div>
+                      <div class="mini-progress"><span data-phone-progress></span></div>
+                      <p class="phone-progress-text"><span data-phone-percent>0</span>% / scoring</p>
+                    </div>
+
+                    <div class="phone-stage phone-stage-result">
+                      <div class="result-screen">
+                        <div class="screen-topline">
+                          <span class="mini-brand"><span class="mini-mark"></span>Drishti</span>
+                          <span class="mono" data-result-latency>—</span>
+                        </div>
+                        <figure class="xray-card">
+                          <img src="assets/xray-sample.png" alt="Chest X-ray result" data-result-image />
+                          <figcaption>uploaded scan</figcaption>
+                        </figure>
+                        <div class="classification-card">
+                          <p>classification</p>
+                          <strong class="result-label" data-result-label>—</strong>
+                          <span data-result-confidence>—</span>
+                        </div>
+                        <div class="result-probabilities" data-result-probabilities></div>
+                        <div class="recommendation">
+                          <span>guidance</span>
+                          <p data-result-guidance>Upload a chest X-ray to run the live Drishti run4 classifier.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="console-column">
+            <div class="terminal-top">
+              <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>drishti.api</span>
+              <span data-terminal-model>run4 · step 4950</span>
+            </div>
+            <div class="terminal-body" aria-live="polite">
+              <p class="terminal-muted" data-terminal-curl>$ curl -F "image=@scan.png" /api/analyze</p>
+              <div data-log-output></div>
+              <div class="terminal-cursor" data-cursor></div>
+              <pre class="terminal-json" data-json-output>{
+  "status": "ready"
+}</pre>
+            </div>
+            <div class="terminal-controls">
+              <button class="btn btn-ghost" type="button" data-reset-demo>Reset</button>
+              <button class="btn btn-run" type="button" data-run-demo>Run inference</button>
+              <span class="run-state" data-run-state>ready</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="results" class="results-section band" aria-labelledby="results-title">
+      <div class="wrap split" data-reveal>
+        <div>
+          <p class="eyebrow">06 / evaluation</p>
+          <h2 id="results-title" class="section-title">How well does it read?</h2>
+          <p>
+            Held-out TBX11K validation workflows are tracked with explicit diagnostic gates for class collapse and proportional minimum predictions.
+          </p>
+          <div class="notice">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"></circle><path d="M10 5.5v5M10 14.5h.01"></path></svg>
+            <span><b>Research artifact, not a medical device.</b> Not validated for clinical use.</span>
+          </div>
+        </div>
+        <div>
+          <div class="metric-grid">
+            <article><span>Accuracy</span><strong data-model-accuracy>98.72<small>%</small></strong><p data-model-val-split>Run #4 · 1,800 val samples</p></article>
+            <article><span>Macro-F1</span><strong data-model-macro-f1>0.979</strong><p>Vision-LoRA ablation</p></article>
+            <article><span>Active TB F1</span><strong data-model-active-f1>0.953</strong><p>200 active_tb support</p></article>
+            <article><span>GGUF</span><strong data-model-gguf-quant>Q4_K_M</strong><p data-model-gguf-size-p>4.68 GB on Hugging Face</p></article>
+          </div>
+          <div class="footprint">
+            <span>Deployment</span>
+            <div>
+              <strong>Run 4 LoRA</strong><p data-model-checkpoint>step 4950 · Qwen2-VL-7B-Instruct</p>
+            </div>
+            <div>
+              <strong>Offline GGUF</strong><p data-model-gguf-files>Q4_K_M text + F16 mmproj</p>
+            </div>
+            <div>
+              <strong>Live demo</strong><p data-model-modal-host>GPU-hosted · run4 LoRA</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stack-section" aria-labelledby="stack-title">
+      <div class="wrap">
+        <div class="section-heading center" data-reveal>
+          <p class="eyebrow">07 / built on</p>
+          <h2 id="stack-title" class="section-title">Open weights, open code, open dataset.</h2>
+          <p>Drishti is an integration project: dataset tooling, vision-language fine-tuning, adapter evaluation, and Grad-CAM overlays in one reproducible repository.</p>
+        </div>
+        <div class="stack-grid" data-reveal>
+          <article>
+            <span class="stack-icon stack-icon-qwen" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="3.2"></circle>
+                <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21"></path>
+                <path d="M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"></path>
+                <path d="M8 15l2.2-2.2M13.8 9.2 16 7"></path>
+              </svg>
+            </span>
+            <h3>Qwen2-VL-7B</h3><p>Vision-language base</p><small>Alibaba</small>
+          </article>
+          <article>
+            <span class="stack-icon stack-icon-dataset" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <ellipse cx="12" cy="6" rx="7" ry="2.6"></ellipse>
+                <path d="M5 6v5c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"></path>
+                <path d="M5 11v5c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6v-5"></path>
+                <path d="M9.5 14.2c.8 1.1 2.2 1.8 3.8 1.8s3-.7 3.8-1.8"></path>
+              </svg>
+            </span>
+            <h3>TBX11K</h3><p>Training dataset</p><small>Liu et al.</small>
+          </article>
+          <article>
+            <span class="stack-icon stack-icon-gradcam" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+                <path d="M7 16l3.5-4 2.5 2.5L15 11l2 3"></path>
+                <circle cx="9" cy="9.5" r="1.2" fill="currentColor" stroke="none"></circle>
+                <path d="M4 9h16M4 13h16" opacity="0.35"></path>
+              </svg>
+            </span>
+            <h3>Grad-CAM</h3><p>Visual explanation overlays</p><small>vision encoder</small>
+          </article>
+          <article>
+            <span class="stack-icon stack-icon-vercel" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <path d="m12 2.8 10.4 18H1.6L12 2.8z"></path>
+              </svg>
+            </span>
+            <h3>Vercel</h3><p>Demo frontend</p><small>drishti-demo.vercel.app</small>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="install-section band" aria-labelledby="install-title">
+      <div class="wrap split" data-reveal>
+        <div>
+          <p class="eyebrow">08 / install</p>
+          <h2 id="install-title" class="section-title">Clone the repo and run the workflow.</h2>
+          <p>
+            The current repository contains the research and training pipeline. The landing page frames the Android/offline direction from the design handoff.
+          </p>
+          <div class="install-actions">
+            <a class="btn btn-primary" href="https://github.com/ShivamSinghNow/Drishti">Open repository</a>
+            <a class="btn btn-outline" href="../README.md">Read setup notes</a>
+          </div>
+        </div>
+        <div class="code-panel">
+          <div class="tabs" role="tablist" aria-label="Install snippets">
+            <button class="active" type="button" role="tab" aria-selected="true" data-tab="colab">Colab</button>
+            <button type="button" role="tab" aria-selected="false" data-tab="rocm">ROCm</button>
+            <button type="button" role="tab" aria-selected="false" data-tab="deploy">Deploy</button>
+          </div>
+          <pre class="code-block active" data-tab-panel="colab"><code># CUDA / Colab workflow
+git clone https://github.com/ShivamSinghNow/Drishti.git
+cd Drishti
+python -m pip install -r requirements-colab.txt
+python generate_jsonl.py --output-dir data/processed</code></pre>
+          <pre class="code-block" data-tab-panel="rocm"><code># AMD MI300X / ROCm workflow
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements-rocm.txt</code></pre>
+          <pre class="code-block" data-tab-panel="eval"><code># Score a saved adapter
+python evaluate_checkpoint.py \
+  --adapter-dir outputs/dri19-run4-vision-lora-ablation/checkpoint-4950 \
+  --data-dir data/processed \
+  --split val \
+  --batch-size 3</code></pre>
+          <pre class="code-block" data-tab-panel="deploy"><code># GPU inference backend (see modal_app.py in repo)
+pip install modal
+modal deploy modal_app.py
+
+# Vercel frontend
+vercel deploy --prod --archive=tgz
+# https://drishti-demo.vercel.app
+
+# Offline GGUF (llama.cpp) — needs text GGUF + mmproj
+llama-server \
+  -hf ShivSingh123/drishti-qwen2vl-run4-gguf:Q4_K_M \
+  --mmproj hf://ShivSingh123/drishti-qwen2vl-run4-gguf/mmproj-drishti-qwen2vl-run4-quantized-f16.gguf</code></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div>
+        <a class="brand footer-brand" href="#top" aria-label="Drishti home">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 28 28" role="img">
+              <circle cx="14" cy="14" r="13"></circle>
+              <circle class="mark-fill" cx="14" cy="14" r="5.5"></circle>
+              <circle class="mark-cutout" cx="14" cy="14" r="1.8"></circle>
+              <path d="M14 1v3M14 24v3M1 14h3M24 14h3"></path>
+            </svg>
+          </span>
+          <span>Drishti</span>
+        </a>
+        <p>&#2342;&#2371;&#2359;&#2381;&#2335;&#2367; - sight, vision. Offline-first medical AI research for places where doctors and bandwidth are scarce.</p>
+      </div>
+      <nav aria-label="Footer project links">
+        <h2>Project</h2>
+        <a href="#how">How it works</a>
+        <a href="#demo">Live demo</a>
+        <a href="#results">Evaluation</a>
+      </nav>
+      <nav aria-label="Footer code links">
+        <h2>Code</h2>
+        <a href="https://github.com/ShivamSinghNow/Drishti">GitHub</a>
+        <a href="https://drishti-demo.vercel.app">Live demo</a>
+        <a href="https://huggingface.co/ShivSingh123/drishti-qwen2vl-run4-gguf">Hugging Face GGUF</a>
+      </nav>
+      <div class="footer-note">
+        <p>Research artifact. Not a medical device.</p>
+        <p>Apache 2.0</p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
